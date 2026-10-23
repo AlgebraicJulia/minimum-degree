@@ -12,25 +12,19 @@
 // The arrays are indexed from 1: entry 0 of each is not used. Only the input
 // graph (xadj, adjncy) is indexed from 0.
 
-// a vector that can grow
-typedef struct {
-    V *data;
-    int64_t length;
-} MDF(vector);
-
 static int MDF(md)(V n, V total, int64_t iwlen, const V *vwght, const V *xadj,
     const V *adjncy, int external, double dense, int mass, int twin, V *invp);
 static V MDF(mdndense)(V neqns, const V *xadj, double dense);
 static int MDF(mdselect)(V *dindex, V neqns, const V *xadj, const V *adjncy, double dense,
     V *ndense);
-static int MDF(md_impl)(I *marker, V *superwght, V *degree, V *deghead, V *degnext,
+static void MDF(md_impl)(I *marker, V *superwght, V *degree, V *deghead, V *degnext,
     V *degprev, V *wext, V *dwght, V *extlen, E *pe, V *len, V *elen, V *iw, E iwlen,
-    MDF(vector) *xw, uint64_t *heads, V total, V neqns, int external, int mass, int twin,
+    uint64_t *heads, V total, V neqns, int external, int mass, int twin,
     const V *vwght, const V *xadj, const V *adjncy, V ndense, int64_t nwords, V *dindex,
     V *dnode, V *ddeg, uint64_t *dmask);
-static int MDF(mdmain)(I *marker, V *superwght, V *degree, V *deghead, V *degnext,
+static void MDF(mdmain)(I *marker, V *superwght, V *degree, V *deghead, V *degnext,
     V *degprev, V *wext, V *dwght, V *extlen, E *pe, V *len, V *elen, V *iw, E iwlen,
-    MDF(vector) *xw, uint64_t *heads, E pfree, V total, V neqns, int external, int mass,
+    uint64_t *heads, E pfree, V total, V neqns, int external, int mass,
     int twin, const V *vwght, V ndense, int64_t nwords, V *dindex, V *dnode, V *ddeg,
     uint64_t *dmask);
 static void MDF(mdelim)(V mdnode, E *pe, V *len, V *elen, V *iw, E iwlen, E *pfreep,
@@ -38,23 +32,22 @@ static void MDF(mdelim)(V mdnode, E *pe, V *len, V *elen, V *iw, E iwlen, E *pfr
     I *marker, V *wext, V *extlen, V *wflgp, V *lemaxp, V dS, V offset, int external,
     int twin, V fnum, V nbypass, int64_t nwords, uint64_t *dmask, V *ddeg, V *rchszep,
     V *deltap, V *swghtp, V *fszep, V *fwghtp);
-static int MDF(mdupdate)(V mdnode, V rchsze, V delta, V dS, V swght, V fwght, E *pe, V *len,
+static void MDF(mdupdate)(V mdnode, V rchsze, V delta, V dS, V swght, V fwght, E *pe, V *len,
     V *elen, V *iw, V *superwght, V *degree, V *deghead, V *degnext, V *degprev, V *wext,
-    I *marker, I *tagp, MDF(vector) *xw, V neqns, V *extlen, V *dwght, int64_t nwords,
+    I *marker, I *tagp, V neqns, V *extlen, V *dwght, int64_t nwords,
     uint64_t *dmask, V *ddeg, V nbypass, V *mindegp, int external, int mass, V offset,
     V *mwghtp);
-static int MDF(mdvisit)(V key, E *pe, V *len, V *elen, V *iw, V *superwght, V *degree,
-    V *deghead, V *degnext, V *degprev, I *marker, I *tagp, MDF(vector) *xw, V neqns,
+static void MDF(mdvisit)(V key, E *pe, V *len, V *elen, V *iw, V *superwght, V *degree,
+    V *deghead, V *degnext, V *degprev, I *marker, I *tagp, V neqns,
     V *extlen, V *dwght, V nbypass, int external, V offset, V *mindegp);
-static int MDF(mdrecompute)(V zhead, V elmnt, E *pe, V *len, V *elen, V *iw, V *superwght,
-    V *degree, V *deghead, V *degnext, V *degprev, I *marker, I *tagp, MDF(vector) *xw,
+static void MDF(mdrecompute)(V zhead, V elmnt, E *pe, V *len, V *elen, V *iw, V *superwght,
+    V *degree, V *deghead, V *degnext, V *degprev, I *marker, I *tagp,
     V neqns, V *extlen, V *dwght, V nbypass, V *mindegp, int external, V offset);
 static void MDF(mdremove)(V node, V *deghead, V *degnext, V *degprev, V offset);
 static V MDF(mdinsert)(V key, V mindeg, V node, int isexact, V *deghead, V *degnext,
     V *degprev, V offset);
 static V MDF(mdkey)(V deg, V wght, int external);
 static V MDF(mdvwght)(const V *vwght, V node);
-static int MDF(resize)(MDF(vector) *xw, int64_t length);
 static int64_t MDF(mdoffset)(int64_t nwords, V node);
 static void MDF(mdsetbit)(uint64_t *dmask, int64_t nwords, V node, V j);
 static int64_t MDF(mdcount)(const uint64_t *dmask, int64_t nwords, V node);
@@ -102,15 +95,9 @@ static int MDF(md)(V n, V total, int64_t iwlen, const V *vwght, const V *xadj,
     V ndense = 0;
     int64_t nwords = 0;
 
-    // the lists of a recomputation (see `mdrecompute`); it grows as needed
-    MDF(vector) xw;
-    xw.length = n / 8;
-    xw.data = (V *) md_malloc((size_t) xw.length + 1, sizeof(V));
-
     if (marker == NULL || superwght == NULL || degree == NULL || deghead == NULL
             || degnext == NULL || degprev == NULL || wext == NULL || extlen == NULL
-            || pe == NULL || len == NULL || elen == NULL || iw == NULL || heads == NULL
-            || xw.data == NULL) {
+            || pe == NULL || len == NULL || elen == NULL || iw == NULL || heads == NULL) {
         status = MD_OUT_OF_MEMORY;
     }
 
@@ -158,14 +145,12 @@ static int MDF(md)(V n, V total, int64_t iwlen, const V *vwght, const V *xadj,
     }
 
     if (status == MD_OK) {
-        status = MDF(md_impl)(marker, superwght, degree, deghead, degnext, degprev,
+        MDF(md_impl)(marker, superwght, degree, deghead, degnext, degprev,
             wext, dwght, extlen, pe, len,
-            elen, iw, (E) iwlen, &xw, heads, total, n, external, mass,
+            elen, iw, (E) iwlen, heads, total, n, external, mass,
             twin, weights, xadj,
             adjncy, ndense, nwords, dindex, dnode, ddeg, dmask);
-    }
 
-    if (status == MD_OK) {
         for (V node = 1; node <= n; node++) {
             invp[node - 1] = degnext[node] - 1;
         }
@@ -173,8 +158,7 @@ static int MDF(md)(V n, V total, int64_t iwlen, const V *vwght, const V *xadj,
 
     free(marker); free(superwght); free(degree); free(deghead); free(degnext); free(degprev);
     free(wext); free(extlen); free(pe); free(len); free(elen); free(iw); free(heads);
-    free(weights); free(xw.data); free(dindex); free(dwght); free(dnode); free(ddeg);
-    free(dmask);
+    free(weights); free(dindex); free(dwght); free(dnode); free(ddeg); free(dmask);
     return status;
 }
 
@@ -252,7 +236,7 @@ static int MDF(mdselect)(V *dindex, V neqns, const V *xadj, const V *adjncy, dou
 
 // This routine copies the adjacency structure into `iw`, and computes the
 // ordering (`mdmain`).
-static int MDF(md_impl)(
+static void MDF(md_impl)(
         I *marker,
         V *superwght,
         V *degree,
@@ -267,7 +251,6 @@ static int MDF(md_impl)(
         V *elen,
         V *iw,
         E iwlen,
-        MDF(vector) *xw,
         uint64_t *heads,
         V total,
         V neqns,
@@ -341,22 +324,18 @@ static int MDF(md_impl)(
         }
     }
 
-    int status;
-
 #ifdef MD_BENCH
     double start = md_clock();
 #endif
 
-    status = MDF(mdmain)(marker, superwght, degree, deghead, degnext, degprev,
+    MDF(mdmain)(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
-        elen, iw, iwlen, xw, heads, pfree, total, neqns, external, mass, twin,
+        elen, iw, iwlen, heads, pfree, total, neqns, external, mass, twin,
         vwght, ndense, nwords, dindex, dnode, ddeg, dmask);
 
 #ifdef MD_BENCH
     md_seconds = md_clock() - start;
 #endif
-
-    return status;
 }
 
 // This routine implements the exact minimum degree algorithm. It makes use
@@ -460,22 +439,16 @@ static int MDF(md_impl)(
 //     there, and otherwise `degprev[deghead[b]]`, which is restored to `-b`
 //     once the bucket is processed. The hash of a node of the reachable set
 //     is kept in `marker` (see `mdelim`).
-//   - `extlen`: for an element, the length of its list of nodes outside the
-//     element being recomputed. For a node of the reachable set, `extlen` is
-//     the second term of its bound, and then its upper bound (see
-//     `mdupdate`).
-//   - `xw`: the lists of nodes outside the element being recomputed (see
-//     `mdrecompute`); it grows when they do not fit
+//   - `extlen`: for an element, the number of its nodes outside the element
+//     being recomputed, which come first in its list (see `mdrecompute`).
+//     For a node of the reachable set, `extlen` is the second term of its
+//     bound, and then its upper bound (see `mdupdate`).
 //   - `marker`: temporary marker vector, used with increasing tags. A node
 //     of the reachable set holds its hash there, as a negative number, until
 //     the indistinguishable nodes are merged
-//   - `elen`: for an element (whose `elen` is not in use), the start in `xw`
-//     of its list of nodes outside the element being recomputed
 //   - `heads`: the first entries of the lists, while `iw` is compressed (see
 //     `mdcompress`)
-//
-// Returns MD_OK, or MD_OUT_OF_MEMORY if `xw` cannot grow.
-static int MDF(mdmain)(
+static void MDF(mdmain)(
         I *marker,
         V *superwght,
         V *degree,
@@ -490,7 +463,6 @@ static int MDF(mdmain)(
         V *elen,
         V *iw,
         E iwlen,
-        MDF(vector) *xw,
         uint64_t *heads,
         E pfree,
         V total,
@@ -505,8 +477,6 @@ static int MDF(mdmain)(
         V *dnode,
         V *ddeg,
         uint64_t *dmask) {
-    int status = MD_OK;
-
     // initialization for the minimum degree algorithm.
     for (V node = 1; node <= neqns; node++) {
         marker[node] = 0;
@@ -577,12 +547,12 @@ static int MDF(mdmain)(
     // overflow
     I tagmax = I_MAX - (I) 8 * (I) neqns - (I) 64;
 
-    while (wleft > 0 && status == MD_OK) {
+    while (wleft > 0) {
         // find the pivot `mdnode`. If no node at the minimum key is exact,
         // they are all recomputed, and the search starts over
         V mdnode = 0;
 
-        while (mdnode == 0 && status == MD_OK) {
+        while (mdnode == 0) {
             if (tag > tagmax) {
                 for (V node = 1; node <= neqns; node++) {
                     marker[node] = 0;
@@ -658,81 +628,75 @@ static int MDF(mdmain)(
                 }
             } else {
                 // recompute every node at the minimum key
-                status = MDF(mdvisit)(mindeg, pe, len, elen, iw, superwght,
+                MDF(mdvisit)(mindeg, pe, len, elen, iw, superwght,
                     degree, deghead, degnext, degprev, marker,
-                    &tag, xw, neqns, extlen, dwght, nbypass, external, offset, &mindeg);
+                    &tag, neqns, extlen, dwght, nbypass, external, offset, &mindeg);
             }
         }
 
-        if (status == MD_OK) {
-            degprev[mdnode] = 0;
-            degnext[mdnode] = -(neqns + rank);
+        degprev[mdnode] = 0;
+        degnext[mdnode] = -(neqns + rank);
 
-            // `mdnode` is the last supernode
-            if (superwght[mdnode] >= wleft) {
-                break;
+        // `mdnode` is the last supernode
+        if (superwght[mdnode] >= wleft) {
+            break;
+        }
+
+        // the dense neighbors of `mdnode` lose it
+        V dS;
+
+        if (nbypass > 0) {
+            // a key is at least the degree plus 1
+            V dlow = MDF(mdlose)(ddeg, dmask, nwords, mdnode, superwght[mdnode]);
+            dS = MDF(mdweight)(dmask, nwords, dnode, mdnode, superwght);
+
+            if (dlow < V_MAX) {
+                dmin = MD_MIN(dmin, dlow + 1);
             }
+        } else {
+            dS = 0;
+        }
 
-            // the dense neighbors of `mdnode` lose it
-            V dS;
+        // eliminate `mdnode` and perform quotient graph
+        // transformation
+        V rchsze, delta, swght, fsze, fwght;
+        MDF(mdelim)(mdnode,
+            pe, len, elen, iw, iwlen, &pfree, heads, neqns, superwght, degree,
+            deghead, degnext, degprev, marker, wext, extlen, &wflg, &lemax,
+            dS, offset, external, twin, rank + 1,
+            nbypass, nwords, dmask, ddeg, &rchsze, &delta, &swght, &fsze, &fwght);
 
-            if (nbypass > 0) {
-                // a key is at least the degree plus 1
-                V dlow = MDF(mdlose)(ddeg, dmask, nwords, mdnode, superwght[mdnode]);
-                dS = MDF(mdweight)(dmask, nwords, dnode, mdnode, superwght);
+        // the nodes in the reachable set, and the dense neighbors of
+        // `mdnode`, become adjacent to the dense neighbors of `mdnode`
+        if (nbypass > 0) {
+            nmissing = MDF(mddense)(mdnode, pe[mdnode], rchsze, iw, dwght, superwght,
+                nwords, dnode, ddeg, dmask, nmissing);
+        }
 
-                if (dlow < V_MAX) {
-                    dmin = MD_MIN(dmin, dlow + 1);
-                }
-            } else {
-                dS = 0;
-            }
+        // merge the indistinguishable nodes of the reachable set, eliminate
+        // some of them with `mdnode` (mass elimination), assign the bounds
+        // of the others, and return them to the degree structure. The
+        // reachable set also loses the false twins of `mdnode`. Mass
+        // elimination is skipped when there are any: a node of the reachable
+        // set adjacent only to the new element and to them is not
+        // indistinguishable from `mdnode`, and it must follow them (they
+        // are numbered right after the supernode of `mdnode`)
+        V mwght;
+        MDF(mdupdate)(mdnode, rchsze, delta, dS, swght, fwght, pe,
+            len, elen, iw, superwght, degree, deghead, degnext,
+            degprev, wext, marker, &tag,
+            neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, &mindeg, external,
+            mass && fsze == 0, offset, &mwght);
 
-            // eliminate `mdnode` and perform quotient graph
-            // transformation
-            V rchsze, delta, swght, fsze, fwght;
-            MDF(mdelim)(mdnode,
-                pe, len, elen, iw, iwlen, &pfree, heads, neqns, superwght, degree,
-                deghead, degnext, degprev, marker, wext, extlen, &wflg, &lemax,
-                dS, offset, external, twin, rank + 1,
-                nbypass, nwords, dmask, ddeg, &rchsze, &delta, &swght, &fsze, &fwght);
+        rank += 1 + fsze; wleft -= swght + fwght + mwght;
+        superwght[mdnode] = 0;
 
-            // the nodes in the reachable set, and the dense neighbors of
-            // `mdnode`, become adjacent to the dense neighbors of `mdnode`
-            if (nbypass > 0) {
-                nmissing = MDF(mddense)(mdnode, pe[mdnode], rchsze, iw, dwght, superwght,
-                    nwords, dnode, ddeg, dmask, nmissing);
-            }
-
-            // merge the indistinguishable nodes of the reachable set, eliminate
-            // some of them with `mdnode` (mass elimination), assign the bounds
-            // of the others, and return them to the degree structure. The
-            // reachable set also loses the false twins of `mdnode`. Mass
-            // elimination is skipped when there are any: a node of the reachable
-            // set adjacent only to the new element and to them is not
-            // indistinguishable from `mdnode`, and it must follow them (they
-            // are numbered right after the supernode of `mdnode`)
-            V mwght;
-            status = MDF(mdupdate)(mdnode, rchsze, delta, dS, swght, fwght, pe,
-                len, elen, iw, superwght, degree, deghead, degnext,
-                degprev, wext, marker, &tag, xw,
-                neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, &mindeg, external,
-                mass && fsze == 0, offset, &mwght);
-
-            rank += 1 + fsze; wleft -= swght + fwght + mwght;
-            superwght[mdnode] = 0;
-
-            if (dS > 0 && (fsze > 0 || mass)) {
-                dmin = 0;
-            }
+        if (dS > 0 && (fsze > 0 || mass)) {
+            dmin = 0;
         }
     }
 
-    if (status == MD_OK) {
-        MDF(mdnumber)(neqns, degnext, degprev, degree);
-    }
-
-    return status;
+    MDF(mdnumber)(neqns, degnext, degprev, degree);
 }
 
 // This routine eliminates the node `mdnode` of minimum degree from the
@@ -1139,7 +1103,7 @@ static void MDF(mdelim)(
 // raised to its old bound minus `swght + fwght + m` if it was not formed by
 // a merge. It is exact if it equals the upper bound, the same expression
 // with `extlen[u]` added. With external degree, the supernodes whose bound
-// is less than `max(0, delta - swght) + w(u) - 1` are recomputed at once
+// is less than `max(0, delta - m - swght) + w(u) - 1` are recomputed at once
 // (`mdrecompute`). The supernodes are returned to the degree lists.
 //
 // input parameters:
@@ -1163,7 +1127,6 @@ static void MDF(mdelim)(
 //   - `mindeg`: new minimum key after degree update
 //   - `ddeg`: the degrees of the dense nodes, which lose the nodes eliminated
 //     with `mdnode`
-//   - `xw`: the lists of the eager pass (see `mdrecompute`)
 //   - `(superwght, degree)`: supernodes and their bounds
 //   - `(deghead, degnext, degprev)`: degree lists
 //   - `marker`: the hashes of the nodes of the reachable set (see `mdelim`),
@@ -1174,9 +1137,7 @@ static void MDF(mdelim)(
 // output parameters:
 //
 //   - `mwght`: the weight of the nodes eliminated with `mdnode`
-//
-// Returns MD_OK, or MD_OUT_OF_MEMORY if `xw` cannot grow.
-static int MDF(mdupdate)(
+static void MDF(mdupdate)(
         V mdnode,
         V rchsze,
         V delta,
@@ -1195,7 +1156,6 @@ static int MDF(mdupdate)(
         V *wext,
         I *marker,
         I *tagp,
-        MDF(vector) *xw,
         V neqns,
         V *extlen,
         V *dwght,
@@ -1208,7 +1168,7 @@ static int MDF(mdupdate)(
         int mass,
         V offset,
         V *mwghtp) {
-    int status = MD_OK; I tag = *tagp; V mindeg = *mindegp;
+    I tag = *tagp; V mindeg = *mindegp;
 
     // the supernodes formed by a merge are marked with `mtag`
     tag += 1; I mtag = tag;
@@ -1318,11 +1278,11 @@ static int MDF(mdupdate)(
         }
     }
 
-    // the floor of the eager pass is that of `mdnode`. The other nodes lose
-    // the nodes eliminated with it, and its false twins, as they lose
-    // `mdnode`
-    V floor = MD_MAX((V) 0, delta - swght);
-    delta -= mwght; swght += mwght + fwght;
+    // the other nodes lose the nodes eliminated with `mdnode`, and its false
+    // twins, as they lose `mdnode`. The floor of the eager pass is that of
+    // `mdnode`, without the nodes eliminated with it
+    delta -= mwght; V floor = MD_MAX((V) 0, delta - swght);
+    swght += mwght + fwght;
     degree[mdnode] -= mwght;
 
     // for each principal node in the reachable set, assign its bound. With
@@ -1376,9 +1336,9 @@ static int MDF(mdupdate)(
 
     // the eager pass
     if (zhead > 0) {
-        status = MDF(mdrecompute)(zhead, mdnode, pe, len, elen, iw,
+        MDF(mdrecompute)(zhead, mdnode, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, marker,
-            &tag, xw, neqns, extlen, dwght, nbypass, &mindeg, external, offset);
+            &tag, neqns, extlen, dwght, nbypass, &mindeg, external, offset);
     }
 
     // with external degree, return the other nodes to the degree structure
@@ -1393,13 +1353,12 @@ static int MDF(mdupdate)(
     }
 
     *mindegp = mindeg; *tagp = tag; *mwghtp = mwght;
-    return status;
 }
 
 // This routine recomputes every node with key `key` that is not exact. The
 // nodes are grouped by their most recent element, and each group is
 // recomputed at once (`mdrecompute`). Returns the new minimum key and the
-// tag, and MD_OK, or MD_OUT_OF_MEMORY if `xw` cannot grow.
+// tag.
 //
 // working arrays:
 //
@@ -1407,7 +1366,7 @@ static int MDF(mdupdate)(
 //     of a group taken first from the list, the corresponding node of the
 //     next group (the groups are chained in order)
 //   - `degnext`: for a node taken from the list, the next node in its group
-static int MDF(mdvisit)(
+static void MDF(mdvisit)(
         V key,
         E *pe,
         V *len,
@@ -1420,7 +1379,6 @@ static int MDF(mdvisit)(
         V *degprev,
         I *marker,
         I *tagp,
-        MDF(vector) *xw,
         V neqns,
         V *extlen,
         V *dwght,
@@ -1428,7 +1386,7 @@ static int MDF(mdvisit)(
         int external,
         V offset,
         V *mindegp) {
-    int status = MD_OK; I tag = *tagp;
+    I tag = *tagp;
 
     // take the whole list, and group it by most recent element. The
     // groups are chained, in order, from `ghead` through `degprev` of the
@@ -1467,46 +1425,43 @@ static int MDF(mdvisit)(
     // inserts the node into a degree list)
     V gnode = ghead;
 
-    while (gnode > 0 && status == MD_OK) {
+    while (gnode > 0) {
         V gnext = degprev[gnode];
         V elmnt = iw[pe[gnode] + (E) elen[gnode] - 1];
 
-        status = MDF(mdrecompute)(degprev[elmnt], elmnt, pe, len, elen, iw,
+        MDF(mdrecompute)(degprev[elmnt], elmnt, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, marker,
-            &tag, xw, neqns, extlen, dwght, nbypass, &mindeg, external, offset);
+            &tag, neqns, extlen, dwght, nbypass, &mindeg, external, offset);
 
         gnode = gnext;
     }
 
     *mindegp = mindeg; *tagp = tag;
-    return status;
 }
 
 // This routine recomputes the external degrees of the nodes of the chain that
 // starts at `zhead` and is linked by `degnext`, whose most recent element is
-// `elmnt`. The nodes of `elmnt` are marked, each
-// other element of the nodes is scanned once to list its nodes outside
-// `elmnt`, and the external degree of each node is the weight of `elmnt`, of
-// the union of these lists and of its uneliminated neighbors, and of its
-// dense neighbors, minus its own weight. The nodes become exact and are
-// inserted into the degree lists. Returns the new minimum key and the tag,
-// and MD_OK, or MD_OUT_OF_MEMORY if `xw` cannot grow.
+// `elmnt`. The nodes of `elmnt` are marked, the list of each other element of
+// the nodes is scanned once and partitioned in place, its nodes outside
+// `elmnt` first, and the external degree of each node is the weight of
+// `elmnt`, of the union of these nodes and of its uneliminated neighbors, and
+// of its dense neighbors, minus its own weight. The nodes become exact and are
+// inserted into the degree lists. Returns the new minimum key and the tag.
 //
 // The elements in the lists of all the nodes (the core) are united once, as
-// they are scanned, so each node only adds the lists of its other elements.
-// This keeps groups whose nodes share many overlapping elements cheap.
+// they are scanned, so each node only adds its other elements. This keeps
+// groups whose nodes share many overlapping elements cheap.
 //
 // working arrays:
 //
-//   - `(elen, extlen, xw)`: the nodes of each element `f` outside `elmnt`
-//     are listed in `xw[s:s + extlen[f] - 1]`, with `s = elen[f]` (`elen` is
-//     not in use for elements; `s` is at most the number of edges, which `V`
-//     holds). `xw` grows first if it is too short.
+//   - `extlen`: the list of each element `f` is partitioned: its `extlen[f]`
+//     nodes outside `elmnt` come first, in order, then its nodes in `elmnt`.
+//     Merged and eliminated nodes are dropped, so `len[f]` can shrink.
 //   - `marker`: the nodes of `elmnt` are marked `etag`; while the elements
 //     are counted, `marker[f] - base` is the number of nodes that list `f`;
 //     the core and the nodes of its lists are marked `ctag`, the other
 //     elements `stag`, and the union of each node `utag`.
-static int MDF(mdrecompute)(
+static void MDF(mdrecompute)(
         V zhead,
         V elmnt,
         E *pe,
@@ -1520,7 +1475,6 @@ static int MDF(mdrecompute)(
         V *degprev,
         I *marker,
         I *tagp,
-        MDF(vector) *xw,
         V neqns,
         V *extlen,
         V *dwght,
@@ -1552,10 +1506,9 @@ static int MDF(mdrecompute)(
     }
 
     // mark the other elements of the nodes with the number of nodes that list
-    // them, `marker[f] - base`, and count their entries (elements and nodes
-    // are marked in the same vector: an element is never an uneliminated
-    // node)
-    tag += 1; I base = tag; tag += (I) gsize; E need = 0;
+    // them, `marker[f] - base` (elements and nodes are marked in the same
+    // vector: an element is never an uneliminated node)
+    tag += 1; I base = tag; tag += (I) gsize;
 
     znode = zhead;
 
@@ -1569,7 +1522,7 @@ static int MDF(mdrecompute)(
 
             if (f != elmnt) {
                 if (marker[f] <= base) {
-                    marker[f] = base + 1; need += (E) len[f];
+                    marker[f] = base + 1;
                 } else {
                     marker[f] += 1;
                 }
@@ -1579,18 +1532,11 @@ static int MDF(mdrecompute)(
         znode = znext;
     }
 
-    // the lists of nodes outside `elmnt` go into `xw` (grow it if necessary)
-    if (need > xw->length) {
-        if (MDF(resize)(xw, MD_MAX((int64_t) need, 2 * xw->length)) != MD_OK) {
-            return MD_OUT_OF_MEMORY;
-        }
-    }
-
-    // scan each other element of the nodes once, and list its nodes outside
-    // `elmnt`. The elements listed by every node of the group (the core) are
-    // marked `ctag`, and the union of their lists, also marked `ctag`, is
-    // taken once here: its weight is `cwght`
-    tag += 1; I stag = tag; tag += 1; I ctag = tag; E pos = 1;
+    // scan each other element of the nodes once, and partition its list. The
+    // elements listed by every node of the group (the core) are marked
+    // `ctag`, and the union of their nodes outside `elmnt`, also marked
+    // `ctag`, is taken once here: its weight is `cwght`
+    tag += 1; I stag = tag; tag += 1; I ctag = tag;
     I full = base + (I) gsize; V cwght = 0;
 
     znode = zhead;
@@ -1612,31 +1558,40 @@ static int MDF(mdrecompute)(
                     marker[f] = stag;
                 }
 
-                elen[f] = (V) pos; E fstart = pos;
+                // the nodes outside `elmnt` go to the front of the list
+                // (`pout` is the next position for them, and `pin` for the
+                // nodes in `elmnt`), and merged and eliminated nodes are
+                // dropped
                 E jstart = pe[f];
                 E jstop = jstart + (E) len[f] - 1;
+                E pout = jstart; E pin = jstart;
 
                 for (E j = jstart; j <= jstop; j++) {
-                    V node = iw[j];
+                    V node = iw[j]; V wght = superwght[node];
 
-                    if (superwght[node] > 0 && marker[node] != etag) {
-                        xw->data[pos] = node; pos += 1;
+                    if (wght > 0) {
+                        if (marker[node] != etag) {
+                            iw[pin] = iw[pout]; iw[pout] = node;
+                            pout += 1; pin += 1;
 
-                        if (core && marker[node] != ctag) {
-                            marker[node] = ctag; cwght += superwght[node];
+                            if (core && marker[node] != ctag) {
+                                marker[node] = ctag; cwght += wght;
+                            }
+                        } else {
+                            iw[pin] = node; pin += 1;
                         }
                     }
                 }
 
-                extlen[f] = (V) (pos - fstart);
+                len[f] = (V) (pin - jstart); extlen[f] = (V) (pout - jstart);
             }
         }
 
         znode = znext;
     }
 
-    // for each node, take the union of the lists and of its uneliminated
-    // neighbors
+    // for each node, take the union of the nodes outside `elmnt` of its
+    // elements, and of its uneliminated neighbors
     V ewght = degree[elmnt];
 
     znode = zhead;
@@ -1652,11 +1607,11 @@ static int MDF(mdrecompute)(
             V f = iw[p];
 
             if (f != elmnt && marker[f] != ctag) {
-                E qstart = (E) elen[f];
+                E qstart = pe[f];
                 E qstop = qstart + (E) extlen[f] - 1;
 
                 for (E q = qstart; q <= qstop; q++) {
-                    V node = xw->data[q];
+                    V node = iw[q];
 
                     if (marker[node] != utag && marker[node] != ctag) {
                         marker[node] = utag; deg += superwght[node];
@@ -1686,7 +1641,6 @@ static int MDF(mdrecompute)(
     }
 
     *mindegp = mindeg; *tagp = tag;
-    return MD_OK;
 }
 
 // This routine removes `node` from the degree lists.
@@ -1767,20 +1721,6 @@ static V MDF(mdvwght)(const V *vwght, V node) {
     }
 
     return wght;
-}
-
-// This routine grows the vector `xw` to `length` entries (its contents are
-// not kept). Returns MD_OK, or MD_OUT_OF_MEMORY.
-static int MDF(resize)(MDF(vector) *xw, int64_t length) {
-    int status = MD_OK;
-    free(xw->data);
-    xw->data = (V *) md_malloc((size_t) length + 1, sizeof(V)); xw->length = length;
-
-    if (xw->data == NULL) {
-        xw->length = 0; status = MD_OUT_OF_MEMORY;
-    }
-
-    return status;
 }
 
 // ---------------------------------------------------------------------
