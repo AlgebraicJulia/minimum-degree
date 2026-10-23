@@ -1,0 +1,14 @@
+.DS_Store
+*.swp
+*.swo
+
+# build outputs
+c/*.o
+c/libmd.a
+c/libmd.so
+c/libmd.dylib
+c/example
+python/build/
+python/src/*.egg-info/
+julia/Manifest.toml
+__pycache__/
