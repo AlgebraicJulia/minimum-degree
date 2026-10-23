@@ -53,6 +53,7 @@ static void MDF(mdremove)(V node, V *deghead, V *degnext, V *degprev, V offset);
 static V MDF(mdinsert)(V key, V mindeg, V node, int isexact, V *deghead, V *degnext,
     V *degprev, V offset);
 static V MDF(mdkey)(V deg, V wght, int external);
+static V MDF(mdvwght)(const V *vwght, V node);
 static int MDF(resize)(MDF(vector) *xw, int64_t length);
 static int64_t MDF(mdoffset)(int64_t nwords, V node);
 static void MDF(mdsetbit)(uint64_t *dmask, int64_t nwords, V node, V j);
@@ -92,7 +93,7 @@ static int MDF(md)(V n, V total, int64_t iwlen, const V *vwght, const V *xadj,
     V *elen = (V *) md_malloc((size_t) n + 1, sizeof(V));
     V *iw = (V *) md_malloc((size_t) iwlen + 1, sizeof(V));
     uint64_t *heads = (uint64_t *) md_malloc((size_t) ((iwlen + 63) / 64) + 1, sizeof(uint64_t));
-    V *weights = (V *) md_malloc((size_t) n + 1, sizeof(V));
+    V *weights = NULL;
     V *dindex = NULL;
     V *dwght = NULL;
     V *dnode = NULL;
@@ -109,19 +110,24 @@ static int MDF(md)(V n, V total, int64_t iwlen, const V *vwght, const V *xadj,
     if (marker == NULL || superwght == NULL || degree == NULL || deghead == NULL
             || degnext == NULL || degprev == NULL || wext == NULL || extlen == NULL
             || pe == NULL || len == NULL || elen == NULL || iw == NULL || heads == NULL
-            || weights == NULL || xw.data == NULL) {
+            || xw.data == NULL) {
         status = MD_OUT_OF_MEMORY;
     }
 
-    if (status == MD_OK) {
-        // the vertex weights, indexed from 1 (all 1 if there are none)
-        for (V node = 1; node <= n; node++) {
-            if (vwght == NULL) {
-                weights[node] = 1;
-            } else {
+    // the vertex weights, indexed from 1 (none if they are all 1)
+    if (status == MD_OK && vwght != NULL) {
+        weights = (V *) md_malloc((size_t) n + 1, sizeof(V));
+
+        if (weights == NULL) {
+            status = MD_OUT_OF_MEMORY;
+        } else {
+            for (V node = 1; node <= n; node++) {
                 weights[node] = vwght[node - 1];
             }
         }
+    }
+
+    if (status == MD_OK) {
 
         // select the dense nodes (`dindex` and `dwght` are needed only if
         // there are any)
@@ -292,7 +298,7 @@ static int MDF(md_impl)(
 
                 if (neighbor != node) {
                     iw[pfree] = neighbor; pfree += 1;
-                    deg += vwght[neighbor];
+                    deg += MDF(mdvwght)(vwght, neighbor);
                 }
             }
 
@@ -326,7 +332,7 @@ static int MDF(md_impl)(
                         MDF(mdsetbit)(dmask, nwords, node, k);
                     } else if (!(j > 0)) {
                         iw[pfree] = neighbor; pfree += 1;
-                        deg += vwght[neighbor];
+                        deg += MDF(mdvwght)(vwght, neighbor);
                     }
                 }
             }
@@ -375,7 +381,7 @@ static int MDF(md_impl)(
 //
 //   - `neqns`: number of equations
 //   - `total`: sum of the vertex weights
-//   - `vwght`: vertex weights
+//   - `vwght`: vertex weights (none if they are all 1)
 //   - `external`: minimize the external degree instead of the degree. Nodes
 //     are indistinguishable if they lie in the reachable set of a pivot and
 //     have the same elements and neighbors there; elements contained in a
@@ -504,7 +510,7 @@ static int MDF(mdmain)(
     // initialization for the minimum degree algorithm.
     for (V node = 1; node <= neqns; node++) {
         marker[node] = 0;
-        superwght[node] = vwght[node];
+        superwght[node] = MDF(mdvwght)(vwght, node);
         elen[node] = 0;
         degnext[node] = 0;
         degprev[node] = 0;
@@ -1750,6 +1756,17 @@ static V MDF(mdkey)(V deg, V wght, int external) {
     }
 
     return key;
+}
+
+// the weight of `node`: `vwght[node]`, or 1 if there are no weights
+static V MDF(mdvwght)(const V *vwght, V node) {
+    V wght = 1;
+
+    if (vwght != NULL) {
+        wght = vwght[node];
+    }
+
+    return wght;
 }
 
 // This routine grows the vector `xw` to `length` entries (its contents are

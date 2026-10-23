@@ -230,53 +230,64 @@ void md_defaults(md_options *options) {
 // This routine checks the vectors of the graph and the weights (not the
 // symmetry of the graph: see `md_check`), and computes the total weight and
 // the length of `iw`. Returns MD_OK or MD_INVALID.
-#define MD_VALID(T)                                                              \
+#define MD_VALID(T)                                                                  \
     static int md_valid_##T(T neqns, const T *vwght, const T *xadj, const T *adjncy, \
-            int64_t *total, int64_t *iwlen) {                                    \
-        int status = MD_OK;                                                      \
-        int64_t nnz = 0;                                                         \
-        *total = 0; *iwlen = 0;                                                  \
-                                                                                 \
-        if (neqns < 0 || xadj == NULL || xadj[0] != 0) {                         \
-            status = MD_INVALID;                                                 \
-        }                                                                        \
-                                                                                 \
-        for (int64_t v = 0; v < (int64_t) neqns && status == MD_OK; v++) {       \
-            if (xadj[v + 1] < xadj[v]) {                                         \
-                status = MD_INVALID;                                             \
-            }                                                                    \
-        }                                                                        \
-                                                                                 \
-        if (status == MD_OK) {                                                   \
-            nnz = (int64_t) xadj[neqns];                                         \
-                                                                                 \
-            if (nnz > 0 && adjncy == NULL) {                                     \
-                status = MD_INVALID;                                             \
-            }                                                                    \
-        }                                                                        \
-                                                                                 \
-        for (int64_t i = 0; i < nnz && status == MD_OK; i++) {                   \
-            if (adjncy[i] < 0 || adjncy[i] >= neqns) {                           \
-                status = MD_INVALID;                                             \
-            }                                                                    \
-        }                                                                        \
-                                                                                 \
-        for (int64_t v = 0; v < (int64_t) neqns && status == MD_OK; v++) {       \
-            if (vwght == NULL) {                                                 \
-                *total += 1;                                                     \
-            } else if (vwght[v] <= 0 || (int64_t) vwght[v] > INT64_MAX / 4 - *total) { \
-                status = MD_INVALID;                                             \
-            } else {                                                             \
-                *total += (int64_t) vwght[v];                                    \
-            }                                                                    \
-        }                                                                        \
-                                                                                 \
-        /* the lists never take more than `nnz` entries of `iw`, except while a  \
-           dense node rejoins, which adds fewer than `2 neqns`. The extra        \
-           `max(nnz / 5, neqns) + neqns` covers that, and leaves room between   \
-           compressions */                                                       \
-        *iwlen = nnz + MD_MAX(nnz / 5, (int64_t) neqns) + (int64_t) neqns;      \
-        return status;                                                           \
+            int64_t *total, int64_t *iwlen) {                                        \
+        int status = MD_OK;                                                          \
+        int64_t nnz = 0;                                                             \
+        *total = 0; *iwlen = 0;                                                      \
+                                                                                     \
+        if (neqns < 0 || xadj == NULL || xadj[0] != 0) {                             \
+            status = MD_INVALID;                                                     \
+        }                                                                            \
+                                                                                     \
+        /* (the loops over xadj and adjncy do not stop early, so that they           \
+           vectorize) */                                                             \
+        if (status == MD_OK) {                                                       \
+            int bad = 0;                                                             \
+                                                                                     \
+            for (int64_t v = 0; v < (int64_t) neqns; v++) {                          \
+                bad |= xadj[v + 1] < xadj[v];                                        \
+            }                                                                        \
+                                                                                     \
+            nnz = (int64_t) xadj[neqns];                                             \
+            bad |= nnz > 0 && adjncy == NULL;                                        \
+                                                                                     \
+            if (bad) {                                                               \
+                status = MD_INVALID;                                                 \
+            }                                                                        \
+        }                                                                            \
+                                                                                     \
+        if (status == MD_OK) {                                                       \
+            uint64_t bad = 0;                                                        \
+                                                                                     \
+            for (int64_t i = 0; i < nnz; i++) {                                      \
+                bad |= (uint64_t) (int64_t) adjncy[i] >= (uint64_t) neqns;           \
+            }                                                                        \
+                                                                                     \
+            if (bad) {                                                               \
+                status = MD_INVALID;                                                 \
+            }                                                                        \
+        }                                                                            \
+                                                                                     \
+        if (status == MD_OK && vwght == NULL) {                                      \
+            *total = (int64_t) neqns;                                                \
+        } else if (status == MD_OK) {                                                \
+            for (int64_t v = 0; v < (int64_t) neqns && status == MD_OK; v++) {       \
+                if (vwght[v] <= 0 || (int64_t) vwght[v] > INT64_MAX / 4 - *total) {  \
+                    status = MD_INVALID;                                             \
+                } else {                                                             \
+                    *total += (int64_t) vwght[v];                                    \
+                }                                                                    \
+            }                                                                        \
+        }                                                                            \
+                                                                                     \
+        /* the lists never take more than `nnz` entries of `iw`, except while a      \
+           dense node rejoins, which adds fewer than `2 neqns`. The extra            \
+           `max(nnz / 5, neqns) + neqns` covers that, and leaves room between        \
+           compressions */                                                           \
+        *iwlen = nnz + MD_MAX(nnz / 5, (int64_t) neqns) + (int64_t) neqns;           \
+        return status;                                                               \
     }
 
 MD_VALID(int32_t)
