@@ -1034,14 +1034,14 @@ static void MDF(mdelim)(
         // `rnode` are `iw[p1:p2]` and its neighbors are `iw[p3:p4]`; `pn` is
         // the next free position, and `pv` the position of the first
         // neighbor after the purging. Along the way, `elmax` is the largest
-        // external part, `elsum` their sum, and `nwght` the weight of the
-        // neighbors.
+        // external part, `elsum` their sum, `nwght` the weight of the
+        // neighbors, and `hash` the sum of the entries kept.
         E p1 = pe[rnode];
         E p2 = p1 + (E) elen[rnode] - 1;
         E p3 = p2 + 1;
         E p4 = p1 + (E) len[rnode] - 1;
         MD_ADD(MD_C_ELIM, p4 - p1 + 1);
-        E pn = p1; uint64_t hash = md_mix((uint64_t) mdnode);
+        E pn = p1; uint64_t hash = 0;
         V elmax = 0; V elsum = 0; V nwght = 0;
 
         for (E p = p1; p <= p2; p++) {
@@ -1054,7 +1054,7 @@ static void MDF(mdelim)(
                     // aggressive absorption: `elmnt` lies in the reachable set
                     len[elmnt] = 0; wext[elmnt] = 0;
                 } else {
-                    iw[pn] = elmnt; pn += 1; hash += md_mix((uint64_t) elmnt);
+                    iw[pn] = elmnt; pn += 1; hash += (uint64_t) elmnt;
                     elmax = MD_MAX(elmax, dext); elsum += dext;
                 }
             }
@@ -1066,7 +1066,7 @@ static void MDF(mdelim)(
             V node = iw[p]; V wght = superwght[node];
 
             if (wght > 0) {
-                iw[pn] = node; pn += 1; hash += md_mix((uint64_t) node);
+                iw[pn] = node; pn += 1; hash += (uint64_t) node;
                 nwght += wght;
             }
         }
@@ -1080,8 +1080,9 @@ static void MDF(mdelim)(
         elen[rnode] = (V) (pv - p1) + 1;
         len[rnode] = (V) (pn - p1) + 1;
 
-        // and place `rnode` in a hash bucket to detect indistinguishable
-        // nodes
+        // and place `rnode` in a hash bucket, by the mixed sum of its list, to
+        // detect indistinguishable nodes
+        hash = md_mix(hash);
         marker[rnode] = -(I) (hash & (uint64_t) I_MAX) - 1;
         V bucket = 2 * offset - (V) ((hash >> 32) & (uint64_t) hashmask);
         degprev[rnode] = bucket;

@@ -94,8 +94,8 @@ static int64_t md_prevpow2(int64_t x) {
     return p;
 }
 
-// a list is hashed as the sum of a mix of its entries, so that lists with
-// the same sum of entries rarely collide
+// the sum of the entries of a list is mixed, so that the hash buckets are
+// used evenly (lists with the same sum share a bucket, and are compared)
 static inline uint64_t md_mix(uint64_t x) {
     uint64_t z = x * UINT64_C(0x9e3779b97f4a7c15);
     return z ^ (z >> 29);
