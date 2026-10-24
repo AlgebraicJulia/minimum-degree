@@ -3,9 +3,14 @@
 #
 #     make
 #
-# and builds and runs the example:
+# builds and runs the example:
 #
 #     make test
+#
+# and checks that the work counters (-DMD_COUNT) leave the orderings
+# unchanged:
+#
+#     make count-test
 
 CC ?= cc
 CFLAGS ?= -O3
@@ -36,7 +41,20 @@ example: example.c md.h libmd.a
 test: example
 	./example
 
+count_test: count_test.c md.c md.h md_impl.h
+	$(CC) $(CFLAGS) count_test.c md.c -lm -o count_test
+
+count_test_count: count_test.c md.c md.h md_impl.h
+	$(CC) $(CFLAGS) -DMD_COUNT count_test.c md.c -lm -o count_test_count
+
+count-test: count_test count_test_count
+	./count_test > count_test.out
+	./count_test_count > count_test_count.out
+	cmp count_test.out count_test_count.out
+	@echo "the orderings are the same with and without MD_COUNT"
+
 clean:
 	rm -f md.o libmd.a libmd.so libmd.dylib example
+	rm -f count_test count_test_count count_test.out count_test_count.out
 
-.PHONY: all test clean
+.PHONY: all test count-test clean

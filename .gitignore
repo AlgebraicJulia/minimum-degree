@@ -8,6 +8,9 @@ c/libmd.a
 c/libmd.so
 c/libmd.dylib
 c/example
+c/count_test
+c/count_test_count
+c/count_test*.out
 python/build/
 python/src/*.egg-info/
 julia/Manifest.toml

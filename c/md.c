@@ -167,6 +167,43 @@ double md_core_seconds(void) {
 }
 #endif
 
+#ifdef MD_COUNT
+// the work counters of the last ordering (a counting build only; see md.h).
+// `md_count_rc` is the first counter of the recomputation being run
+// (`MD_C_PASS_MARK` or `MD_C_WATER_MARK`), and `md_count_h` the position of
+// the water walk (-1 before the first operation). The water of an operation
+// is the key of its level minus 1; after an elimination, the walk is at the
+// intermediate position (see `mdupdate`).
+static int64_t md_count[MD_NCOUNT];
+static int md_count_rc = MD_C_WATER_MARK;
+static int64_t md_count_h = -1;
+
+#define MD_ADD(k, x) (md_count[k] += (int64_t) (x))
+#define MD_ADD_RC(i, x) (md_count[md_count_rc + (i)] += (int64_t) (x))
+#define MD_SET_RC(k) (md_count_rc = (k))
+#define MD_WALK(w) md_count_walk((int64_t) (w))
+
+// an operation at water `w`: the walk rises (or falls) to `w`
+static void md_count_walk(int64_t w) {
+    if (md_count_h >= 0 && w > md_count_h) {
+        md_count[MD_C_RISE] += w - md_count_h;
+    }
+
+    md_count_h = w;
+}
+
+void md_counts(int64_t out[MD_NCOUNT]) {
+    for (int k = 0; k < MD_NCOUNT; k++) {
+        out[k] = md_count[k];
+    }
+}
+#else
+#define MD_ADD(k, x) ((void) 0)
+#define MD_ADD_RC(i, x) ((void) 0)
+#define MD_SET_RC(k) ((void) 0)
+#define MD_WALK(w) ((void) 0)
+#endif
+
 // ---------------------------------------------------------------------
 // the algorithm, for each choice of integer types
 // ---------------------------------------------------------------------
