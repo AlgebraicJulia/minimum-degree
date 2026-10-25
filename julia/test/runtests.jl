@@ -11,7 +11,7 @@ using Test
     @test md(0, [1], Int[]) == Int[]
 
     # every option gives a permutation
-    for n in (1, 2, 10, 50), external in (false, true), dense in (10.0, 0.0, -1.0), mass in (false, true), twin in (false, true)
+    for n in (1, 2, 10, 50), external in (false, true), dense in (10.0, 0.0, -1.0), mass in (false, true), twin in (false, true), compress in (false, true)
         adj = [Int[] for _ in 1:n]
 
         for u in 1:n, v in (u + 1):n
@@ -21,7 +21,7 @@ using Test
         end
 
         xadj = cumsum([1; length.(adj)]); adjncy = reduce(vcat, adj; init = Int[])
-        invp = md(n, rand(1:3, n), xadj, adjncy; external, dense, mass, twin)
+        invp = md(n, rand(1:3, n), xadj, adjncy; external, dense, mass, twin, compress)
         @test sort(invp) == 1:n
     end
 end

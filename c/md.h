@@ -42,6 +42,8 @@ typedef struct {
                        disables this (default 10.0) */
     int mass;       /* mass elimination (default 1) */
     int twin;       /* false-twin detection (default 1) */
+    int compress;   /* merge the vertices with the same closed neighborhood
+                       first (default 1) */
 } md_options;
 
 /* set the default options */

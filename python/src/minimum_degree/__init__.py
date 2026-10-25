@@ -27,6 +27,7 @@ class _Options(ctypes.Structure):
         ("dense", ctypes.c_double),
         ("mass", ctypes.c_int),
         ("twin", ctypes.c_int),
+        ("compress", ctypes.c_int),
     ]
 
 
@@ -94,7 +95,8 @@ def _call(fun, dtype, n, vwght, xadj, adjncy, options):
     return status, invp
 
 
-def md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, twin=True):
+def md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, twin=True,
+       compress=True):
     """Compute a minimum degree permutation of a graph with n vertices and m
     edges in O(mn) time and O(m + n) space. Returns the inverse permutation
     `invp`: `invp[v]` is the position of vertex `v` (so the permutation is
@@ -113,6 +115,7 @@ def md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, t
       are handled as dense (a negative value disables this)
     - `mass`: mass elimination
     - `twin`: false-twin detection
+    - `compress`: merge the vertices with the same closed neighborhood first
     """
     if adjncy is None:
         xadj, adjncy = _pattern(xadj)
@@ -131,7 +134,8 @@ def md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, t
         if vwght.shape != (n,) or not np.all(vwght == np.floor(vwght)) or np.any(vwght < 1):
             raise ValueError("md: vwght must hold n positive integers")
 
-    options = _Options(int(bool(external)), float(dense), int(bool(mass)), int(bool(twin)))
+    options = _Options(int(bool(external)), float(dense), int(bool(mass)), int(bool(twin)),
+        int(bool(compress)))
     status = _MD_TOO_LARGE
     small = np.iinfo(np.int32).max
 

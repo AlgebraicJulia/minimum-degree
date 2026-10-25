@@ -94,12 +94,13 @@ int main(void) {
             }
         }
 
-        for (int k = 0; k < 24; k++) {
+        for (int k = 0; k < 48; k++) {
             md_options options;
             options.external = k % 2;
             options.mass = (k / 2) % 2;
             options.twin = (k / 4) % 2;
             options.dense = dense[(k / 8) % 3];
+            options.compress = (k / 24) % 2;
 
             if (md_order(n, vwght, xadj, adjncy, invp, &options) != MD_OK) {
                 printf("error\n");

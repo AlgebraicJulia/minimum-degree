@@ -13,20 +13,22 @@
 // graph (xadj, adjncy) is indexed from 0.
 
 static int MDF(md)(V n, V total, int64_t iwlen, const V *vwght, const V *xadj,
-    const V *adjncy, int external, double dense, int mass, int twin, V *invp);
+    const V *adjncy, int external, double dense, int mass, int twin, int compress, V *invp);
 static V MDF(mdndense)(V neqns, const V *xadj, double dense);
 static int MDF(mdselect)(V *dindex, V neqns, const V *xadj, const V *adjncy, double dense,
     V *ndense);
 static void MDF(md_impl)(I *marker, V *superwght, V *degree, V *deghead, V *degnext,
     V *degprev, V *wext, V *dwght, V *extlen, E *pe, V *len, V *elen, V *iw, E iwlen,
-    uint64_t *heads, V total, V neqns, int external, int mass, int twin,
+    uint64_t *heads, V total, V neqns, int external, int mass, int twin, int compress,
     const V *vwght, const V *xadj, const V *adjncy, V ndense, int64_t nwords, V *dindex,
     V *dnode, V *ddeg, uint64_t *dmask);
+static V MDF(mdclasses)(V neqns, const E *pe, const V *len, const V *iw, const V *wext,
+    V *extlen, I *marker, V *deghead, V *degprev, int64_t nwords, const uint64_t *dmask);
 static void MDF(mdmain)(I *marker, V *superwght, V *degree, V *deghead, V *degnext,
     V *degprev, V *wext, V *dwght, V *extlen, E *pe, V *len, V *elen, V *iw, E iwlen,
     uint64_t *heads, E pfree, V total, V neqns, int external, int mass,
-    int twin, const V *vwght, V ndense, int64_t nwords, V *dindex, V *dnode, V *ddeg,
-    uint64_t *dmask);
+    int twin, int merged, const V *vwght, V ndense, int64_t nwords, V *dindex, V *dnode,
+    V *ddeg, uint64_t *dmask);
 static void MDF(mdelim)(V mdnode, E *pe, V *len, V *elen, V *iw, E iwlen, E *pfreep,
     uint64_t *heads, V neqns, V *superwght, V *degree, V *deghead, V *degnext, V *degprev,
     I *marker, V *wext, V *extlen, V *wflgp, V *lemaxp, V dS, V offset, int external,
@@ -71,7 +73,8 @@ static void MDF(mdnumber)(V neqns, V *degnext, V *size, V *start);
 // and computes the ordering. Unless the allocation fails, `invp[v]` is then
 // the position of vertex `v`, both indexed from 0.
 static int MDF(md)(V n, V total, int64_t iwlen, const V *vwght, const V *xadj,
-        const V *adjncy, int external, double dense, int mass, int twin, V *invp) {
+        const V *adjncy, int external, double dense, int mass, int twin, int compress,
+        V *invp) {
     int status = MD_OK;
     I *marker = (I *) md_malloc((size_t) n + 1, sizeof(I));
     V *superwght = (V *) md_malloc((size_t) n + 1, sizeof(V));
@@ -148,7 +151,7 @@ static int MDF(md)(V n, V total, int64_t iwlen, const V *vwght, const V *xadj,
         MDF(md_impl)(marker, superwght, degree, deghead, degnext, degprev,
             wext, dwght, extlen, pe, len,
             elen, iw, (E) iwlen, heads, total, n, external, mass,
-            twin, weights, xadj,
+            twin, compress, weights, xadj,
             adjncy, ndense, nwords, dindex, dnode, ddeg, dmask);
 
         for (V node = 1; node <= n; node++) {
@@ -257,6 +260,7 @@ static void MDF(md_impl)(
         int external,
         int mass,
         int twin,
+        int compress,
         const V *vwght,
         const V *xadj,
         const V *adjncy,
@@ -275,12 +279,13 @@ static void MDF(md_impl)(
 #endif
 
     // copy the adjacency structure into `iw`, dropping self loops (the graph
-    // is indexed from 0)
-    E pfree = 1;
+    // is indexed from 0), and keep the sum of the closed neighborhood of each
+    // node in `wext` (-1 for a dense node)
+    E pfree = 1; V nmerge = 0;
 
     if (ndense == 0) {
         for (V node = 1; node <= neqns; node++) {
-            pe[node] = pfree; V deg = 0;
+            pe[node] = pfree; V deg = 0; uint64_t hash = (uint64_t) node;
             E istart = (E) xadj[node - 1];
             E istop = (E) xadj[node] - 1;
 
@@ -290,10 +295,12 @@ static void MDF(md_impl)(
                 if (neighbor != node) {
                     iw[pfree] = neighbor; pfree += 1;
                     deg += MDF(mdvwght)(vwght, neighbor);
+                    hash += (uint64_t) neighbor;
                 }
             }
 
             len[node] = (V) (pfree - pe[node]); degree[node] = deg;
+            wext[node] = (V) (hash & (uint64_t) V_MAX);
         }
     } else {
         // the dense nodes are left out of `iw`: the adjacency between any
@@ -309,7 +316,7 @@ static void MDF(md_impl)(
                 dnode[j] = node;
             }
 
-            pe[node] = pfree; V deg = 0;
+            pe[node] = pfree; V deg = 0; uint64_t hash = (uint64_t) node;
             E istart = (E) xadj[node - 1];
             E istop = (E) xadj[node] - 1;
 
@@ -324,11 +331,19 @@ static void MDF(md_impl)(
                     } else if (!(j > 0)) {
                         iw[pfree] = neighbor; pfree += 1;
                         deg += MDF(mdvwght)(vwght, neighbor);
+                        hash += (uint64_t) neighbor;
                     }
                 }
             }
 
             len[node] = (V) (pfree - pe[node]); degree[node] = deg;
+
+            // dense nodes are not merged
+            if (j > 0) {
+                wext[node] = -1;
+            } else {
+                wext[node] = (V) (hash & (uint64_t) V_MAX);
+            }
         }
     }
 
@@ -336,10 +351,45 @@ static void MDF(md_impl)(
     double start = md_clock();
 #endif
 
+    // with `compress`, find the classes of nodes with the same closed
+    // neighborhood: `extlen[node]` is the first node of the class of `node`,
+    // or 0 if `node` is first. They are merged before the minimum degree
+    // algorithm starts (`mdmain`)
+    if (compress) {
+        nmerge = MDF(mdclasses)(neqns, pe, len, iw, wext, extlen, marker, deghead,
+            degprev, nwords, dmask);
+    }
+
+    // the lists of the first nodes of the classes keep only the first nodes
+    // of the classes (the other nodes of a class adjacent to `node` are
+    // adjacent to the first one, which `node`'s list holds too), and are
+    // packed at the front of `iw` (the writes trail the reads)
+    if (nmerge > 0) {
+        E p = 1;
+
+        for (V node = 1; node <= neqns; node++) {
+            if (extlen[node] == 0) {
+                E pstart = pe[node]; E pstop = pstart + (E) len[node] - 1;
+                pe[node] = p;
+
+                // branch-free: every entry is written, and the next one
+                // overwrites it unless it is kept
+                for (E q = pstart; q <= pstop; q++) {
+                    V neighbor = iw[q];
+                    iw[p] = neighbor; p += (E) (extlen[neighbor] == 0);
+                }
+
+                len[node] = (V) (p - pe[node]);
+            }
+        }
+
+        pfree = p;
+    }
+
     MDF(mdmain)(marker, superwght, degree, deghead, degnext, degprev,
         wext, dwght, extlen, pe, len,
         elen, iw, iwlen, heads, pfree, total, neqns, external, mass, twin,
-        vwght, ndense, nwords, dindex, dnode, ddeg, dmask);
+        nmerge > 0, vwght, ndense, nwords, dindex, dnode, ddeg, dmask);
 
 #ifdef MD_BENCH
     md_seconds = md_clock() - start;
@@ -353,6 +403,121 @@ static void MDF(md_impl)(
         assert(total == 0 || md_count[MD_C_RISE] < (int64_t) total);
     }
 #endif
+}
+
+// This routine finds the classes of nodes with the same closed
+// neighborhood. Such nodes are indistinguishable: with degree, merging them
+// keeps the ordering exact. `wext[node]` holds the sum of the closed
+// neighborhood of `node` (-1 for a dense node, which is not merged). The
+// first node of each class is kept in a hash table (buckets in `deghead`,
+// chains in `degprev`). A node is compared with the first nodes in its bucket
+// that have the same sum and length, by marking the closed neighborhood of
+// the first node `r` with `r` (kept marked while `cur == r`): it joins `r` if
+// it is marked and every other neighbor is marked (the lengths are equal),
+// and, with dense nodes, the masks are equal. Sets `extlen[node]` to the
+// first node of its class, or 0. Returns the number of nodes merged.
+//
+// input parameters:
+//
+//   - `neqns`: number of equations
+//   - `(pe, len, iw)`: the adjacency structure
+//   - `wext`: the sums of the closed neighborhoods
+//   - `(nwords, dmask)`: the masks of the dense neighbors (see `mdselect`)
+//
+// output parameters:
+//
+//   - `extlen`: the first node of the class of each node, or 0
+//
+// working arrays:
+//
+//   - `marker`: marks of the closed neighborhoods
+//   - `deghead`: buckets of the hash table
+//   - `degprev`: chains of the hash table
+static V MDF(mdclasses)(
+        V neqns,
+        const E *pe,
+        const V *len,
+        const V *iw,
+        const V *wext,
+        V *extlen,
+        I *marker,
+        V *deghead,
+        V *degprev,
+        int64_t nwords,
+        const uint64_t *dmask) {
+    V nmerge = 0; V cur = 0;
+
+    // buckets: a power of two between `neqns` and `2 neqns`
+    int64_t nb = 1;
+
+    while (nb < (int64_t) neqns) {
+        nb <<= 1;
+    }
+
+    uint64_t bmask = (uint64_t) (nb - 1);
+
+    for (int64_t b = 1; b <= nb; b++) {
+        deghead[b] = 0;
+    }
+
+    for (V node = 1; node <= neqns; node++) {
+        marker[node] = 0;
+    }
+
+    for (V node = 1; node <= neqns; node++) {
+        V h = wext[node]; extlen[node] = 0;
+
+        if (!(h < 0)) {
+            V nlen = len[node]; E pstart = pe[node]; E pstop = pstart + (E) nlen - 1;
+            int64_t b = (int64_t) (md_mix((uint64_t) h) & bmask) + 1;
+            V r = deghead[b]; int found = 0;
+
+            while (r > 0) {
+                if (wext[r] == h && len[r] == nlen) {
+                    I tag = (I) r;
+
+                    if (cur != r) {
+                        cur = r; marker[r] = tag;
+                        E rstart = pe[r]; E rstop = rstart + (E) nlen - 1;
+
+                        for (E q = rstart; q <= rstop; q++) {
+                            marker[iw[q]] = tag;
+                        }
+                    }
+
+                    int same = marker[node] == tag;
+
+                    if (same) {
+                        for (E q = pstart; q <= pstop; q++) {
+                            V u = iw[q];
+
+                            if (u != r && marker[u] != tag) {
+                                same = 0;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (same && nwords > 0) {
+                        same = MDF(mdsame)(dmask, nwords, node, r);
+                    }
+
+                    if (same) {
+                        extlen[node] = r; nmerge += 1; found = 1;
+                        break;
+                    }
+                }
+
+                r = degprev[r];
+            }
+
+            if (!found) {
+                degprev[node] = deghead[b]; deghead[b] = node;
+            }
+        }
+    }
+
+    return nmerge;
 }
 
 // This routine implements the exact minimum degree algorithm. It makes use
@@ -396,6 +561,9 @@ static void MDF(md_impl)(
 //     pivot's supernode. With degree it is then simplicial and of minimum
 //     degree, so the ordering remains exact. With `external` it need not be,
 //     and the ordering is no longer exact (see `mdelim`).
+//   - `merged`: merge the classes in `extlen` first. On input, `extlen[node]`
+//     is the first node of the class of `node` (nodes with the same closed
+//     neighborhood), or 0 if `node` is first (see `mdclasses`)
 //   - `iwlen`: length of `iw`
 //   - `(ndense, nwords, dindex, dnode, ddeg, dmask)`: the dense nodes (see
 //     `mdselect`). Their lists are empty: their adjacency, and every
@@ -407,8 +575,9 @@ static void MDF(md_impl)(
 // updated parameters:
 //
 //   - `(pe, len, elen, iw)`: quotient graph. On input, `(pe, len, iw)` holds
-//     the adjacency structure, and `degree` the weight of the neighbors in
-//     each list. For an uneliminated node, the list
+//     the adjacency structure (with `merged`, the lists of the first nodes of
+//     the classes, which hold only first nodes), and `degree` the weight of
+//     the neighbors of each node. For an uneliminated node, the list
 //     `iw[pe[node]:pe[node] + len[node] - 1]` holds `elen[node]` elements,
 //     sorted by elimination order, followed by its uneliminated neighbors;
 //     for an eliminated node (element), it holds the nodes in the element.
@@ -487,6 +656,7 @@ static void MDF(mdmain)(
         int external,
         int mass,
         int twin,
+        int merged,
         const V *vwght,
         V ndense,
         int64_t nwords,
@@ -506,6 +676,29 @@ static void MDF(mdmain)(
 
     for (V key = 1; key <= 2 * (total + 1); key++) {
         deghead[key] = 0;
+    }
+
+    // merge the classes of nodes with the same closed neighborhood
+    // (`extlen`): each node joins the first node of its class. The degree of
+    // the first node counted the other nodes of its class, which are not
+    // external to the supernode
+    if (merged) {
+        for (V node = 1; node <= neqns; node++) {
+            V r = extlen[node];
+
+            if (r > 0) {
+                superwght[r] += superwght[node]; superwght[node] = 0;
+                degnext[node] = -r; len[node] = 0;
+            }
+        }
+
+        for (V node = 1; node <= neqns; node++) {
+            if (extlen[node] == 0) {
+                degree[node] -= superwght[node] - MDF(mdvwght)(vwght, node);
+            }
+
+            extlen[node] = 0;
+        }
     }
 
     // - `mindeg` is the current minimum key
@@ -536,11 +729,11 @@ static void MDF(mdmain)(
         }
     }
 
-    // `degree` holds the weight of the neighbors in each list (summed while
-    // the adjacency was copied)
+    // `degree` holds the weight of the neighbors of each node outside its
+    // supernode (summed while the adjacency was copied)
     for (V node = 1; node <= neqns; node++) {
-        // dense nodes stay out of the degree lists
-        if (ndense == 0 || !(dindex[node] > 0)) {
+        // dense nodes and merged nodes stay out of the degree lists
+        if (superwght[node] > 0 && (ndense == 0 || !(dindex[node] > 0))) {
             V deg = degree[node];
 
             if (ndense > 0) {

@@ -262,6 +262,7 @@ void md_defaults(md_options *options) {
     options->dense = 10.0;
     options->mass = 1;
     options->twin = 1;
+    options->compress = 1;
 }
 
 // This routine checks the vectors of the graph and the weights (not the
@@ -355,10 +356,10 @@ int md_order(int32_t neqns, const int32_t *vwght, const int32_t *xadj,
             status = MD_TOO_LARGE;
         } else if (neqns < INT32_MAX / 64) {
             status = md_32(neqns, (int32_t) total, iwlen, vwght, xadj, adjncy, options->external,
-                options->dense, options->mass, options->twin, invp);
+                options->dense, options->mass, options->twin, options->compress, invp);
         } else {
             status = md_32l(neqns, (int32_t) total, iwlen, vwght, xadj, adjncy, options->external,
-                options->dense, options->mass, options->twin, invp);
+                options->dense, options->mass, options->twin, options->compress, invp);
         }
     }
 
@@ -383,7 +384,7 @@ int md_l_order(int64_t neqns, const int64_t *vwght, const int64_t *xadj,
 
     if (status == MD_OK) {
         status = md_64(neqns, total, iwlen, vwght, xadj, adjncy, options->external,
-            options->dense, options->mass, options->twin, invp);
+            options->dense, options->mass, options->twin, options->compress, invp);
     }
 
     return status;

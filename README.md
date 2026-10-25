@@ -8,7 +8,8 @@ orderings.
 
 ## Python
 
-    md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, twin=True)
+    md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, twin=True,
+       compress=True)
 
 The package needs NumPy (and SciPy, for sparse matrices), and a C compiler
 to build the library. From this directory:
@@ -34,7 +35,7 @@ Indices start at 0. Tests: `python python/tests/test_md.py`.
 
 ## Julia
 
-    md(neqns[, vwght], xadj, adjncy; external=true, dense=10.0, mass=true, twin=true)
+    md(neqns[, vwght], xadj, adjncy; external=true, dense=10.0, mass=true, twin=true, compress=true)
 
 ```julia-repl
 julia> using Pkg; Pkg.develop(path = "julia")
@@ -116,7 +117,8 @@ the graph.
     are handled as dense (a negative value disables this)
   - `mass`: mass elimination
   - `twin`: false-twin detection
+  - `compress`: merge the vertices with the same closed neighborhood first
 
 In C, `invp` receives the inverse permutation, and `options` points to an
-`md_options` whose fields are the last four parameters (`NULL` for the
+`md_options` whose fields are the last five parameters (`NULL` for the
 defaults; see `md_defaults` in `md.h`).

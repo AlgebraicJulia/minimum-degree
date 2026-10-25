@@ -23,7 +23,7 @@ def test_matrix():
 
 
 def test_options():
-    invp = md(XADJ, ADJNCY, external=False, mass=False, twin=False)
+    invp = md(XADJ, ADJNCY, external=False, mass=False, twin=False, compress=False)
     assert sorted(invp.tolist()) == list(range(8))
     assert md(XADJ, ADJNCY, vwght=np.ones(8, dtype=int)).tolist() == INVP
 
