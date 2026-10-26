@@ -23,7 +23,8 @@ static void MDF(md_impl)(I *marker, V *superwght, V *degree, V *deghead, V *degn
     const V *vwght, const V *xadj, const V *adjncy, V ndense, int64_t nwords, V *dindex,
     V *dnode, V *ddeg, uint64_t *dmask);
 static V MDF(mdclasses)(V neqns, const E *pe, const V *len, const V *iw, const V *wext,
-    V *extlen, I *marker, V *deghead, V *degprev, int64_t nwords, const uint64_t *dmask);
+    V *extlen, I *marker, V *deghead, V *degprev, V *elen, V *superwght, V *degnext,
+    int64_t nwords, const uint64_t *dmask);
 static void MDF(mdmain)(I *marker, V *superwght, V *degree, V *deghead, V *degnext,
     V *degprev, V *wext, V *dwght, V *extlen, E *pe, V *len, V *elen, V *iw, E iwlen,
     uint64_t *heads, E pfree, V total, V neqns, int external, int mass,
@@ -357,7 +358,7 @@ static void MDF(md_impl)(
     // algorithm starts (`mdmain`)
     if (compress) {
         nmerge = MDF(mdclasses)(neqns, pe, len, iw, wext, extlen, marker, deghead,
-            degprev, nwords, dmask);
+            degprev, elen, superwght, degnext, nwords, dmask);
     }
 
     // the lists of the first nodes of the classes keep only the first nodes
@@ -408,14 +409,19 @@ static void MDF(md_impl)(
 // This routine finds the classes of nodes with the same closed
 // neighborhood. Such nodes are indistinguishable: with degree, merging them
 // keeps the ordering exact. `wext[node]` holds the sum of the closed
-// neighborhood of `node` (-1 for a dense node, which is not merged). The
-// first node of each class is kept in a hash table (buckets in `deghead`,
-// chains in `degprev`). A node is compared with the first nodes in its bucket
-// that have the same sum and length, by marking the closed neighborhood of
-// the first node `r` with `r` (kept marked while `cur == r`): it joins `r` if
-// it is marked and every other neighbor is marked (the lengths are equal),
-// and, with dense nodes, the masks are equal. Sets `extlen[node]` to the
-// first node of its class, or 0. Returns the number of nodes merged.
+// neighborhood of `node` (-1 for a dense node, which is not merged).
+//
+// First each node joins, unchecked, the first node with the same sum and
+// length, found in a hash table of first nodes (buckets in `deghead`, chains
+// in `degprev`); the members of each first node are listed in order. Then
+// each first node `r` with members marks its closed neighborhood with `r`,
+// once, and each member is checked against the marks: it is in the class of
+// `r` if it is marked and every other neighbor is marked (the lengths are
+// equal), and, with dense nodes, the masks are equal. The members that fail
+// are checked in turn against the first of them, and so on. Checking the
+// members of a node together reads its marks while they are in cache. Sets
+// `extlen[node]` to the first node of its class, or 0. Returns the number of
+// nodes merged.
 //
 // input parameters:
 //
@@ -433,6 +439,8 @@ static void MDF(md_impl)(
 //   - `marker`: marks of the closed neighborhoods
 //   - `deghead`: buckets of the hash table
 //   - `degprev`: chains of the hash table
+//   - `(elen, superwght, degnext)`: the list of members of each first node
+//     (its first and last member, and the next member of each member)
 static V MDF(mdclasses)(
         V neqns,
         const E *pe,
@@ -443,9 +451,12 @@ static V MDF(mdclasses)(
         I *marker,
         V *deghead,
         V *degprev,
+        V *elen,
+        V *superwght,
+        V *degnext,
         int64_t nwords,
         const uint64_t *dmask) {
-    V nmerge = 0; V cur = 0;
+    V nmerge = 0;
 
     // buckets: a power of two between `neqns` and `2 neqns`
     int64_t nb = 1;
@@ -464,34 +475,62 @@ static V MDF(mdclasses)(
         marker[node] = 0;
     }
 
+    // each node joins the first node with the same sum and length, unchecked
     for (V node = 1; node <= neqns; node++) {
-        V h = wext[node]; extlen[node] = 0;
+        V h = wext[node]; extlen[node] = 0; elen[node] = 0;
 
         if (!(h < 0)) {
-            V nlen = len[node]; E pstart = pe[node]; E pstop = pstart + (E) nlen - 1;
-            int64_t b = (int64_t) (md_mix((uint64_t) h) & bmask) + 1;
-            V r = deghead[b]; int found = 0;
+            V nlen = len[node]; int64_t b = (int64_t) (md_mix((uint64_t) h) & bmask) + 1;
+            V r = deghead[b];
 
-            while (r > 0) {
-                if (wext[r] == h && len[r] == nlen) {
-                    I tag = (I) r;
+            while (r > 0 && !(wext[r] == h && len[r] == nlen)) {
+                r = degprev[r];
+            }
 
-                    if (cur != r) {
-                        cur = r; marker[r] = tag;
-                        E rstart = pe[r]; E rstop = rstart + (E) nlen - 1;
+            if (r > 0) {
+                extlen[node] = r; degnext[node] = 0;
 
-                        for (E q = rstart; q <= rstop; q++) {
-                            marker[iw[q]] = tag;
-                        }
-                    }
+                if (elen[r] == 0) {
+                    elen[r] = node;
+                } else {
+                    degnext[superwght[r]] = node;
+                }
 
-                    int same = marker[node] == tag;
+                superwght[r] = node;
+            } else {
+                degprev[node] = deghead[b]; deghead[b] = node;
+            }
+        }
+    }
+
+    // check the members of each first node against its marks
+    for (V node = 1; node <= neqns; node++) {
+        if (extlen[node] == 0 && elen[node] > 0) {
+            V head = node; V member = elen[node];
+
+            while (member > 0) {
+                // mark the closed neighborhood of `head`
+                I tag = (I) head; marker[head] = tag;
+                E rstart = pe[head]; E rstop = rstart + (E) len[head] - 1;
+
+                for (E q = rstart; q <= rstop; q++) {
+                    marker[iw[q]] = tag;
+                }
+
+                // the members that fail are listed, in order, for the next
+                // round
+                V fhead = 0; V ftail = 0;
+
+                while (member > 0) {
+                    V next = degnext[member];
+                    E pstart = pe[member]; E pstop = pstart + (E) len[member] - 1;
+                    int same = marker[member] == tag;
 
                     if (same) {
                         for (E q = pstart; q <= pstop; q++) {
                             V u = iw[q];
 
-                            if (u != r && marker[u] != tag) {
+                            if (u != head && marker[u] != tag) {
                                 same = 0;
                                 break;
                             }
@@ -499,20 +538,33 @@ static V MDF(mdclasses)(
                     }
 
                     if (same && nwords > 0) {
-                        same = MDF(mdsame)(dmask, nwords, node, r);
+                        same = MDF(mdsame)(dmask, nwords, member, head);
                     }
 
                     if (same) {
-                        extlen[node] = r; nmerge += 1; found = 1;
-                        break;
+                        extlen[member] = head; nmerge += 1;
+                    } else {
+                        degnext[member] = 0;
+
+                        if (ftail == 0) {
+                            fhead = member;
+                        } else {
+                            degnext[ftail] = member;
+                        }
+
+                        ftail = member;
                     }
+
+                    member = next;
                 }
 
-                r = degprev[r];
-            }
+                // the first member that failed is the first node of a new
+                // class, which the others are checked against
+                head = fhead; member = 0;
 
-            if (!found) {
-                degprev[node] = deghead[b]; deghead[b] = node;
+                if (head > 0) {
+                    extlen[head] = 0; member = degnext[head];
+                }
             }
         }
     }
