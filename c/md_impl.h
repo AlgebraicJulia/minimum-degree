@@ -993,10 +993,11 @@ static void MDF(mdmain)(
 // the new element. If `mdnode` is adjacent to no element, its list of
 // uneliminated neighbors holds the reachable set, which is formed there, in
 // place. Otherwise it is formed at `pfree`, after a compression if the tail of
-// `iw` is too short: it holds at most `degree[mdnode] - dS` nodes (each node
-// weighs at least 1). That fits after a compression: outside a rejoin, the
-// lists take at most `nnz` entries, and `iw` has at least `nnz + 2 neqns`
-// (see `md`); a rejoining dense node has no element.
+// `iw` is too short: it holds fewer than `neqns` nodes, and at most
+// `degree[mdnode] - dS` (each node weighs at least 1). That fits after a
+// compression: outside a rejoin, the lists take at most `nnz` entries, and
+// `iw` has at least `nnz + 2 neqns` (see `md`); a rejoining dense node has no
+// element.
 //
 // input parameters:
 //
@@ -1090,7 +1091,7 @@ static void MDF(mdelim)(
     if (inplace) {
         rstart = pe[mdnode];
     } else {
-        E need = (E) (degree[mdnode] - dS);
+        E need = (E) MD_MIN(degree[mdnode] - dS, neqns);
 
         if (pfree + need - 1 > iwlen) {
             pfree = MDF(mdcompress)(neqns, pe, len, iw, pfree, heads);

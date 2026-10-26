@@ -85,12 +85,17 @@ int main(void) {
         int32_t *invp = malloc(sizeof(int32_t) * (size_t) n);
         graph(n, deg, nhubs, xadj, &adjncy);
 
-        // vertex weights in half of the trials
+        // vertex weights in half of the trials, heavy in half of those
         if (trial % 2 == 1) {
+            int32_t wmax = 3;
             vwght = malloc(sizeof(int32_t) * (size_t) n);
 
+            if (trial % 4 == 3) {
+                wmax = 1000;
+            }
+
             for (int32_t v = 0; v < n; v++) {
-                vwght[v] = 1 + (int32_t) (next() % 3);
+                vwght[v] = 1 + (int32_t) (next() % (uint64_t) wmax);
             }
         }
 

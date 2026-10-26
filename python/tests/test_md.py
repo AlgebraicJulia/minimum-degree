@@ -28,6 +28,15 @@ def test_options():
     assert md(XADJ, ADJNCY, vwght=np.ones(8, dtype=int)).tolist() == INVP
 
 
+def test_heavy():
+    # a path on 6 vertices, every weight 100: the space for a reachable set
+    # is bounded by its number of nodes, not by its weight
+    xadj = [0, 1, 3, 5, 7, 9, 10]
+    adjncy = [1, 0, 2, 1, 3, 2, 4, 3, 5, 4]
+    invp = md(xadj, adjncy, vwght=np.full(6, 100))
+    assert sorted(invp.tolist()) == list(range(6))
+
+
 def test_empty():
     assert md([0], []).tolist() == []
 
@@ -50,6 +59,7 @@ if __name__ == "__main__":
     test_arrays()
     test_matrix()
     test_options()
+    test_heavy()
     test_empty()
     test_check()
     print("ok")
