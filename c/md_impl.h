@@ -582,9 +582,9 @@ static V MDF(mdclasses)(
 // or plus its weight (with degree). The algorithm repeats the following.
 // If an exact node has the minimum key, it is eliminated (`mdelim`,
 // `mdupdate`), and the nodes of its reachable set get new bounds.
-// Otherwise every node at the minimum key is recomputed: they are grouped
-// by most recent element, and each group is recomputed at once
-// (`mdrecompute`).
+// Otherwise the nodes at the minimum key with the most recent element of the
+// first node of their list (a group) are recomputed at once (`mdrecompute`,
+// from `mdvisit`), and the search starts over.
 //
 // A node of weight w stands for w indistinguishable nodes, so the degree of
 // a node is the weight of its closed neighborhood minus one, and its external
@@ -812,7 +812,7 @@ static void MDF(mdmain)(
 
     while (wleft > 0) {
         // find the pivot `mdnode`. If no node at the minimum key is exact,
-        // they are all recomputed, and the search starts over
+        // one group of them is recomputed, and the search starts over
         V mdnode = 0;
 
         while (mdnode == 0) {
@@ -1578,8 +1578,10 @@ static void MDF(mdupdate)(
 
     // the other nodes lose the nodes eliminated with `mdnode`, and its false
     // twins, as they lose `mdnode`. The floor of the eager pass is that of
-    // `mdnode`, without the nodes eliminated with it
-    delta -= mwght; V floor = MD_MAX((V) 0, delta - swght);
+    // `mdnode`, without the nodes eliminated with it: the pass takes the
+    // nodes whose key is below `max(delta - swght + 1, 0) + w(u) - 1`, that
+    // is, whose bound is below `efloor + w(u) - 1`
+    delta -= mwght; V efloor = MD_MAX((V) -1, delta - swght);
     swght += mwght + fwght;
     degree[mdnode] -= mwght;
 
@@ -1614,7 +1616,7 @@ static void MDF(mdupdate)(
             if (!external) {
                 V key = MDF(mdkey)(lo, rwght, external);
                 mindeg = MDF(mdinsert)(key, mindeg, rnode, lo == hi, deghead, degnext, degprev, offset);
-            } else if (lo < hi && lo < floor + rwght - 1) {
+            } else if (lo < hi && lo < efloor + rwght - 1) {
                 if (ztail == 0) {
                     zhead = rnode;
                 } else {
@@ -1658,7 +1660,7 @@ static void MDF(mdupdate)(
     // `phi` is the floor of the eager pass (`max(0, delta - 1)` with degree)
     // and `l` the least key minus 1 in the reachable set, now (these reads are
     // not counted)
-    int64_t phi = (int64_t) floor;
+    int64_t phi = (int64_t) MD_MAX((V) 0, efloor);
 
     if (!external) {
         phi = MD_MAX((int64_t) 0, (int64_t) delta - 1);
@@ -1680,17 +1682,13 @@ static void MDF(mdupdate)(
     *mindegp = mindeg; *tagp = tag; *mwghtp = mwght;
 }
 
-// This routine recomputes every node with key `key` that is not exact. The
-// nodes are grouped by their most recent element, and each group is
-// recomputed at once (`mdrecompute`). Returns the new minimum key and the
-// tag.
-//
-// working arrays:
-//
-//   - `degprev`: for an element, the first node of its group; for the node
-//     of a group taken first from the list, the corresponding node of the
-//     next group (the groups are chained in order)
-//   - `degnext`: for a node taken from the list, the next node in its group
+// This routine recomputes one group of the nodes with key `key` that are not
+// exact: the run of nodes at the head of their list whose most recent element
+// is that of the first (`mdrecompute`). The run is the whole group, since a
+// list of such nodes is a sequence of whole groups: nodes enter it only at the
+// end of an elimination (`mdupdate`), at its head, all with the pivot as their
+// most recent element, which no node gains later; and they leave it without
+// separating the others. Returns the new minimum key and the tag.
 static void MDF(mdvisit)(
         V key,
         E *pe,
@@ -1711,57 +1709,53 @@ static void MDF(mdvisit)(
         int external,
         V offset,
         V *mindegp) {
-    I tag = *tagp;
+    I tag = *tagp; V mindeg = key;
 
-    // take the whole list, and group it by most recent element. The
-    // groups are chained, in order, from `ghead` through `degprev` of the
-    // node of each group taken first
-    tag += 1; I gtag = tag; V mindeg = key; V ghead = 0; V gtail = 0;
-    V node = deghead[key + offset]; deghead[key + offset] = 0;
+    // take the run at the head of the list: the nodes whose most recent
+    // element is that of the first, and the one node after them, are read.
+    // Their links back are cleared, and the node after the run becomes the
+    // head of the list
+    V head = deghead[key + offset];
+    V elmnt = iw[pe[head] + (E) elen[head] - 1];
+    V tail = head; V node = degnext[head]; int same = 1;
+    md_prefetch(len, head); md_prefetch(degree, head);
+    degprev[head] = 0;
+    MD_ADD(MD_C_WATER_VAR, 1);
 
-    while (node > 0) {
+    while (node > 0 && same) {
+        // ask for what the next node needs here
         V nxnode = degnext[node];
-
-        // ask for what the next node needs here, and for what this one
-        // needs in its recomputation
         md_prefetch(pe, nxnode); md_prefetch(elen, nxnode);
-        md_prefetch(len, node); md_prefetch(degree, node);
-
-        degnext[node] = degprev[node] = 0;
-        V elmnt = iw[pe[node] + (E) elen[node] - 1];
+        same = iw[pe[node] + (E) elen[node] - 1] == elmnt;
         MD_ADD(MD_C_WATER_VAR, 1);
 
-        if (marker[elmnt] != gtag) {
-            marker[elmnt] = gtag; degprev[elmnt] = 0;
-
-            if (gtail == 0) {
-                ghead = node;
-            } else {
-                degprev[gtail] = node;
-            }
-
-            gtail = node;
+        if (same) {
+            // and what this one needs in its recomputation
+            md_prefetch(len, node); md_prefetch(degree, node);
+            degprev[node] = 0; tail = node; node = nxnode;
         }
-
-        degnext[node] = degprev[elmnt]; degprev[elmnt] = node;
-        node = nxnode;
     }
 
-    // recompute each group (read the link first: the recomputation
-    // inserts the node into a degree list)
-    V gnode = ghead;
+    degnext[tail] = 0; deghead[key + offset] = node;
 
-    while (gnode > 0) {
-        V gnext = degprev[gnode];
-        V elmnt = iw[pe[gnode] + (E) elen[gnode] - 1];
-        MD_ADD(MD_C_WATER_VAR, 1); MD_ADD(MD_C_GROUPS, 1); MD_SET_RC(MD_C_WATER_MARK);
-
-        MDF(mdrecompute)(degprev[elmnt], elmnt, pe, len, elen, iw,
-            superwght, degree, deghead, degnext, degprev, marker,
-            &tag, neqns, extlen, dwght, nbypass, &mindeg, external, offset);
-
-        gnode = gnext;
+    if (node > 0) {
+        degprev[node] = -(key + offset);
     }
+
+#ifdef MD_DEBUG
+    // the run is the whole group
+    V later = node;
+
+    while (later > 0) {
+        assert(iw[pe[later] + (E) elen[later] - 1] != elmnt);
+        later = degnext[later];
+    }
+#endif
+
+    MD_ADD(MD_C_GROUPS, 1); MD_SET_RC(MD_C_WATER_MARK);
+    MDF(mdrecompute)(head, elmnt, pe, len, elen, iw,
+        superwght, degree, deghead, degnext, degprev, marker,
+        &tag, neqns, extlen, dwght, nbypass, &mindeg, external, offset);
 
     *mindegp = mindeg; *tagp = tag;
 }
