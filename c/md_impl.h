@@ -1762,9 +1762,10 @@ static void MDF(mdvisit)(
 
 // This routine recomputes the external degrees of the nodes of the chain that
 // starts at `zhead` and is linked by `degnext`, whose most recent element is
-// `elmnt`. The nodes of `elmnt` are marked, the list of each other element of
-// the nodes is scanned once and partitioned in place, its nodes outside
-// `elmnt` first, and the external degree of each node is the weight of
+// `elmnt`. The nodes of `elmnt` are marked (its merged and eliminated nodes
+// leave its list), the list of each other element of the nodes is scanned
+// once and partitioned in place, its nodes outside `elmnt` first, and the
+// external degree of each node is the weight of
 // `elmnt`, of the union of these nodes and of its uneliminated neighbors, and
 // of its dense neighbors, minus its own weight. The nodes become exact and are
 // inserted into the degree lists. Returns the new minimum key and the tag.
@@ -1806,19 +1807,24 @@ static void MDF(mdrecompute)(
     I tag = *tagp; V mindeg = *mindegp;
     (void) neqns;
 
-    // mark the nodes of `elmnt`
+    // mark the nodes of `elmnt`, and drop its merged and eliminated nodes
+    // from its list, as the other lists are below (the writes trail the
+    // reads)
     tag += 1; I etag = tag;
     E estart = pe[elmnt];
     E estop = estart + (E) len[elmnt] - 1;
+    E pkeep = estart;
     MD_ADD_RC(0, estop - estart + 1);
 
     for (E j = estart; j <= estop; j++) {
         V node = iw[j];
 
         if (superwght[node] > 0) {
-            marker[node] = etag;
+            marker[node] = etag; iw[pkeep] = node; pkeep += 1;
         }
     }
+
+    len[elmnt] = (V) (pkeep - estart);
 
     // count the nodes of the group
     int64_t gsize = 0; V znode = zhead;
