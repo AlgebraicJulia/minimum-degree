@@ -47,7 +47,8 @@ O(mn) time and O(m + n) space. Returns the inverse permutation `invp`.
     `adjncy[xadj[v]:xadj[v + 1] - 1]`, and self loops are ignored
   - `external`: minimize the external degree instead of the degree
   - `dense`: vertices with more than `max(16, dense * sqrt(neqns))` neighbors
-    are handled as dense (a negative value disables this)
+    (other than themselves) are dense, and are removed from the graph and
+    ordered last, as AMD does (a negative value disables this)
   - `mass`: mass elimination
   - `twin`: false-twin detection
   - `compress`: merge the vertices with the same closed neighborhood first
@@ -87,11 +88,10 @@ function md(::Type{V}, neqns::Integer, total::Integer, vwght::AbstractVector, xa
     n = convert(V, neqns)
     @inbounds nnz = convert(Int, xadj[neqns + 1]) - 1
 
-    # the lists never take more than `nnz` entries of `iw`, except while a
-    # dense node rejoins, which adds fewer than `2 neqns` (see `mdreinsert!`).
-    # The extra `max(nnz ÷ 5, neqns) + neqns` covers that, and leaves room
-    # between compressions. Positions in `iw` are 32-bit integers when they
-    # suffice, whatever the type of `xadj`
+    # the lists never take more than `nnz` entries of `iw`: the extra
+    # `max(nnz ÷ 5, neqns) + neqns` leaves room between compressions.
+    # Positions in `iw` are 32-bit integers when they suffice, whatever the
+    # type of `xadj`
     iwlen = nnz + max(nnz ÷ 5, convert(Int, neqns)) + convert(Int, neqns)
 
     # 32-bit positions (`E`) when they suffice, and 32-bit tags (`I`) when
@@ -128,90 +128,50 @@ function md(::Type{V}, ::Type{E}, ::Type{I}, n::V, total::V, iwlen::Int, vwght::
     heads = FVector{UInt64}(undef, cld(iwlen, 64))
     iwlen = convert(E, iwlen)
 
-    # select the dense nodes (`dindex` and `dwght` are needed only if there
-    # are any)
-    ndense = mdndense(n, xadj, dense); dlen = zero(V)
-
-    if ispositive(ndense)
-        dlen = n
-    end
-
-    dindex = FVector{V}(undef, dlen)
-    ndense = mdselect!(dindex, n, xadj, adjncy, dense, ndense)
-    nwords = cld(convert(Int, ndense), 64)
-    dwght = FVector{V}(undef, dlen)
-    dnode = FVector{V}(undef, ndense)
-    ddeg = FVector{V}(undef, ndense)
-    dmask = FVector{UInt64}(undef, nwords * convert(Int, n))
+    # mark the dense nodes in `marker`
+    ndense = mdndense!(marker, n, xadj, adjncy, dense)
 
     md_impl!(marker, superwght, degree, deghead, degnext, degprev,
-        wext, dwght, extlen, pe, len,
+        wext, extlen, pe, len,
         elen, iw, iwlen, heads, total, n, external, mass,
         twin, compress, vwght, xadj,
-        adjncy, ndense, nwords, dindex, dnode, ddeg, dmask)
+        adjncy, ndense)
 
     return degnext
 end
 
-# This routine counts the nodes with more than `max(16, dense * sqrt(neqns))`
-# neighbors: the candidates of `mdselect!` (0 if `dense` is negative).
-function mdndense(neqns::V, xadj::AbstractVector, dense::Real) where {V}
+# This routine finds the dense nodes, as AMD does: the nodes with more than
+# `max(16, dense * sqrt(neqns))` neighbors other than themselves (none if
+# `dense` is negative). They are removed from the graph and numbered last.
+# Returns their number, and, unless `dense` is negative, sets `marker[node]`
+# to 1 for each dense node and 0 for the others.
+function mdndense!(marker::AbstractVector{I}, neqns::V, xadj::AbstractVector, adjncy::AbstractVector, dense::Real) where {I, V}
     ndense = zero(V)
 
     if !isnegative(dense)
         thresh = max(16.0, dense * sqrt(convert(Float64, neqns)))
 
         @inbounds for node in oneto(neqns)
-            if convert(Float64, xadj[node + one(V)] - xadj[node]) > thresh
-                ndense += one(V)
+            istart = xadj[node]
+            istop = xadj[node + one(V)] - one(istart)
+            deg = istop - istart + one(istart); marker[node] = zero(I)
+
+            # the self loops are not neighbors (only long lists are scanned)
+            if convert(Float64, deg) > thresh
+                for i in istart:istop
+                    if adjncy[i] == node
+                        deg -= one(deg)
+                    end
+                end
+
+                if convert(Float64, deg) > thresh
+                    marker[node] = one(I); ndense += one(V)
+                end
             end
         end
     end
 
     return ndense
-end
-
-# This routine selects the dense nodes: the nodes with more than
-# `max(16, dense * sqrt(neqns))` neighbors. To keep the space linear, the
-# masks may use at most `nnz / 2` words, so if there are too many dense
-# nodes, only those of highest degree are selected (the lowest-numbered
-# among nodes of equal degree). `ndense` is the number of candidates (see
-# `mdndense`). Returns the number of dense nodes and sets `dindex` (empty if
-# there are no candidates).
-function mdselect!(dindex::AbstractVector{V}, neqns::V, xadj::AbstractVector{E}, adjncy::AbstractVector, dense::Real, ndense::V) where {V, E}
-    maxdense = ndense
-
-    if ispositive(ndense)
-        thresh = max(16.0, dense * sqrt(convert(Float64, neqns)))
-
-        @inbounds for node in oneto(neqns)
-            dindex[node] = zero(V)
-        end
-
-        # at most `64 * maxwords` dense nodes, where
-        # `maxwords * neqns <= nnz / 2`
-        @inbounds nnz = convert(Int, xadj[neqns + one(V)] - one(E))
-        maxwords = max(1, nnz ÷ (2 * convert(Int, neqns)))
-        maxdense = convert(V, min(convert(Int, ndense), 64 * maxwords))
-        cand = Vector{V}(undef, ndense); k = 0
-
-        @inbounds for node in oneto(neqns)
-            if convert(Float64, xadj[node + one(V)] - xadj[node]) > thresh
-                k += 1; cand[k] = node
-            end
-        end
-
-        if maxdense < ndense
-            sort!(cand; by = node -> (xadj[node] - xadj[node + one(V)], node))
-            resize!(cand, maxdense); sort!(cand)
-        end
-
-        @inbounds for j in eachindex(cand)
-            dindex[cand[j]] = convert(V, j)
-        end
-    end
-
-    return maxdense
 end
 
 # This routine copies the adjacency structure into `iw`, and computes the
@@ -224,7 +184,6 @@ function md_impl!(
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         wext::AbstractVector{V},
-        dwght::AbstractVector{V},
         extlen::AbstractVector{V},
         pe::AbstractVector{E},
         len::AbstractVector{V},
@@ -242,17 +201,13 @@ function md_impl!(
         xadj::AbstractVector,
         adjncy::AbstractVector,
         ndense::V,
-        nwords::Int,
-        dindex::AbstractVector{V},
-        dnode::AbstractVector{V},
-        ddeg::AbstractVector{V},
-        dmask::AbstractVector{UInt64},
     ) where {I, V, E}
     @assert iwlen <= length(iw)
 
     # copy the adjacency structure into `iw`, dropping self loops, and keep
-    # the sum of the closed neighborhood of each node in `wext` (-1 for a
-    # dense node)
+    # the sum of the closed neighborhood of each node in `wext`. With dense
+    # nodes (marked in `marker`, see `mdndense!`), they have no lists, the
+    # other lists leave them out, and `wext` is -1 for them
     pfree = one(E); nmerge = zero(V)
 
     if iszero(ndense)
@@ -275,32 +230,17 @@ function md_impl!(
             wext[node] = convert(V, hash & convert(UInt64, typemax(V)))
         end
     else
-        # the dense nodes are left out of `iw`: the adjacency between any
-        # node and a dense node is stored in the masks
-        @inbounds for i in eachindex(dmask)
-            dmask[i] = zero(UInt64)
-        end
-
         @inbounds for node in oneto(neqns)
-            j = dindex[node]
-
-            if ispositive(j)
-                dnode[j] = node
-            end
-
             pe[node] = pfree; deg = zero(V); hash = convert(UInt64, node)
-            istart = xadj[node]
-            istop = xadj[node + one(V)] - one(istart)
 
-            for i in istart:istop
-                neighbor = convert(V, adjncy[i])
+            if iszero(marker[node])
+                istart = xadj[node]
+                istop = xadj[node + one(V)] - one(istart)
 
-                if neighbor != node
-                    k = dindex[neighbor]
+                for i in istart:istop
+                    neighbor = convert(V, adjncy[i])
 
-                    if ispositive(k)
-                        mdsetbit!(dmask, nwords, node, k)
-                    elseif !ispositive(j)
+                    if neighbor != node && iszero(marker[neighbor])
                         iw[pfree] = neighbor; pfree += one(E)
                         deg += trunc(V, vwght[neighbor])
                         hash += convert(UInt64, neighbor)
@@ -311,10 +251,10 @@ function md_impl!(
             len[node] = convert(V, pfree - pe[node]); degree[node] = deg
 
             # dense nodes are not merged
-            if ispositive(j)
-                wext[node] = -one(V)
-            else
+            if iszero(marker[node])
                 wext[node] = convert(V, hash & convert(UInt64, typemax(V)))
+            else
+                wext[node] = -one(V)
             end
         end
     end
@@ -325,7 +265,7 @@ function md_impl!(
     # algorithm starts (`mdmain!`)
     if compress
         nmerge = mdclasses!(neqns, pe, len, iw, wext, extlen, marker, deghead,
-            degprev, elen, superwght, degnext, nwords, dmask)
+            degprev, elen, superwght, degnext)
     end
 
     # the lists of the first nodes of the classes keep only the first nodes
@@ -355,9 +295,9 @@ function md_impl!(
     end
 
     mdmain!(marker, superwght, degree, deghead, degnext, degprev,
-        wext, dwght, extlen, pe, len,
+        wext, extlen, pe, len,
         elen, iw, iwlen, heads, pfree, total, neqns, external, mass, twin,
-        ispositive(nmerge), vwght, ndense, nwords, dindex, dnode, ddeg, dmask)
+        ispositive(nmerge), vwght, ndense)
 
     return degnext
 end
@@ -373,7 +313,7 @@ end
 # each first node `r` with members marks its closed neighborhood with `r`,
 # once, and each member is checked against the marks: it is in the class of
 # `r` if it is marked and every other neighbor is marked (the lengths are
-# equal), and, with dense nodes, the masks are equal. The members that fail
+# equal). The members that fail
 # are checked in turn against the first of them, and so on. Checking the
 # members of a node together reads its marks while they are in cache. Sets
 # `extlen[node]` to the first node of its class, or 0. Returns the number of
@@ -384,7 +324,6 @@ end
 #   - `neqns`: number of equations
 #   - `(pe, len, iw)`: the adjacency structure
 #   - `wext`: the sums of the closed neighborhoods
-#   - `(nwords, dmask)`: the masks of the dense neighbors (see `mdselect!`)
 #
 # output parameters:
 #
@@ -410,8 +349,6 @@ function mdclasses!(
         elen::AbstractVector{V},
         superwght::AbstractVector{V},
         degnext::AbstractVector{V},
-        nwords::Int,
-        dmask::AbstractVector{UInt64},
     ) where {I, V, E}
     nmerge = zero(V)
 
@@ -494,10 +431,6 @@ function mdclasses!(
                         end
                     end
 
-                    if same && ispositive(nwords)
-                        same = mdsame(dmask, nwords, member, head)
-                    end
-
                     if same
                         extlen[member] = head; nmerge += one(V)
                     else
@@ -559,27 +492,23 @@ end
 #     absorption). The ordering is exact for these supernodes.
 #   - `mass`: mass elimination. Each node of the reachable set whose only
 #     neighbors are those of the new element (it lies in no other element,
-#     has no other neighbors, and has the same dense neighbors as the pivot)
-#     is eliminated with the pivot. With degree such a node is
+#     and has no other neighbors) is eliminated with the pivot. With degree such a node is
 #     indistinguishable from the pivot, so the ordering remains exact. With
 #     `external` it need not be, and the ordering is no longer exact.
 #   - `twin`: false-twin elimination. Each node outside the reachable set
 #     whose neighbors are exactly the reachable set of the pivot, which has
-#     never been in a reachable set, and whose dense neighbors (and, with
-#     degree, weight) are those of the pivot, is eliminated right after the
-#     pivot's supernode. With degree it is then simplicial and of minimum
+#     never been in a reachable set, and whose weight (with degree) is that
+#     of the pivot, is eliminated right after the pivot's supernode. With degree it is then simplicial and of minimum
 #     degree, so the ordering remains exact. With `external` it need not be,
 #     and the ordering is no longer exact (see `mdelim!`).
 #   - `merged`: merge the classes in `extlen` first. On input, `extlen[node]`
 #     is the first node of the class of `node` (nodes with the same closed
 #     neighborhood), or 0 if `node` is first (see `mdclasses!`)
 #   - `iwlen`: length of `iw`
-#   - `(ndense, nwords, dindex, dnode, ddeg, dmask)`: the dense nodes (see
-#     `mdselect!`). Their lists are empty: their adjacency, and every
-#     adjacency to them, is stored in the masks. They are kept out of the
-#     quotient graph until one of them has minimum degree, so the ordering
-#     remains exact; with `external`, indistinguishable nodes must also have
-#     the same dense neighbors.
+#   - `ndense`: the number of dense nodes (see `mdndense!`). They are left
+#     out of the graph (`wext` is -1 for them on input, and their lists are
+#     empty), and numbered last, in order: the ordering is exact for the
+#     graph without them.
 #
 # updated parameters:
 #
@@ -625,8 +554,6 @@ end
 #     if it has not been met at the current elimination, and `wflg` plus the
 #     weight of its nodes outside the reachable set if it has. For a node of
 #     the reachable set, the first term of its bound (see `mdelim!`).
-#   - `dwght`: the weight of the dense neighbors of each node (empty if there
-#     are no dense nodes)
 #   - hash buckets, used to detect indistinguishable nodes, share `deghead`
 #     with the degree lists. They use its last entries, whose lists (not
 #     exact, with keys near `total`) are almost always empty: the first node
@@ -651,7 +578,6 @@ function mdmain!(
         degnext::AbstractVector{V},
         degprev::AbstractVector{V},
         wext::AbstractVector{V},
-        dwght::AbstractVector{V},
         extlen::AbstractVector{V},
         pe::AbstractVector{E},
         len::AbstractVector{V},
@@ -668,11 +594,6 @@ function mdmain!(
         merged::Bool,
         vwght::AbstractVector,
         ndense::V,
-        nwords::Int,
-        dindex::AbstractVector{V},
-        dnode::AbstractVector{V},
-        ddeg::AbstractVector{V},
-        dmask::AbstractVector{UInt64},
     ) where {I, V, E}
     @assert neqns <= length(marker)
     @assert neqns <= length(superwght)
@@ -681,25 +602,28 @@ function mdmain!(
     @assert neqns <= length(degnext)
     @assert neqns <= length(degprev)
     @assert neqns <= length(wext)
-    @assert iszero(ndense) || neqns <= length(dwght)
     @assert neqns <= length(extlen)
     @assert neqns <= length(pe)
     @assert neqns <= length(len)
     @assert neqns <= length(elen)
     @assert neqns <= length(vwght)
     @assert pfree <= iwlen + one(E) <= length(iw) + one(E)
-    @assert ndense <= length(dnode)
-    @assert ndense <= length(ddeg)
-    @assert iszero(ndense) || neqns <= length(dindex)
-    @assert nwords * neqns <= length(dmask)
 
-    # initialization for the minimum degree algorithm.
+    # initialization for the minimum degree algorithm. A dense node has weight
+    # 0, so it stays out of the degree lists, and `wdense` is their weight
+    wdense = zero(V)
+
     @inbounds for node in oneto(neqns)
         marker[node] = zero(I)
         superwght[node] = trunc(V, vwght[node])
         elen[node] = zero(V)
         degnext[node] = zero(V)
         degprev[node] = zero(V)
+
+        if ispositive(ndense) && isnegative(wext[node])
+            wdense += superwght[node]; superwght[node] = zero(V)
+        end
+
         wext[node] = one(V)
     end
 
@@ -732,45 +656,21 @@ function mdmain!(
 
     # - `mindeg` is the current minimum key
     # - `rank` counts the eliminated supernodes plus 1, and `wleft` is the
-    #   weight of the uneliminated nodes
+    #   weight of the uneliminated nodes (but for the dense nodes)
     # - `tag` is used to facilitate marking nodes; the tags are reset
     #   before they overflow
     # - `wflg` is the flag of `wext`, and `lemax` the largest weight of an
     #   element
     # - `offset` separates the keys of the lists that are not exact
-    mindeg = total + one(V); rank = one(V); wleft = total; tag = zero(I)
+    mindeg = total + one(V); rank = one(V); wleft = total - wdense; tag = zero(I)
     wflg = one(V); lemax = zero(V); offset = total + one(V)
-
-    # - `nbypass` is the number of dense nodes outside the quotient graph
-    # - `nmissing` is the number of ordered pairs of such nodes that are
-    #   not adjacent
-    nbypass = ndense; nmissing = 0; dmin = zero(V)
-
-    if ispositive(ndense)
-        @inbounds for node in oneto(neqns)
-            dwght[node] = zero(V)
-        end
-
-        mddenseinit!(ddeg, dmask, nwords, ndense, dnode, neqns, superwght)
-
-        @inbounds for j in oneto(ndense)
-            nmissing += convert(Int, ndense) - 1 - mdcount(dmask, nwords, dnode[j])
-        end
-    end
 
     # `degree` holds the weight of the neighbors of each node outside its
     # supernode (summed while the adjacency was copied)
     @inbounds for node in oneto(neqns)
         # dense nodes and merged nodes stay out of the degree lists
-        if ispositive(superwght[node]) && (iszero(ndense) || !ispositive(dindex[node]))
+        if ispositive(superwght[node])
             deg = degree[node]
-
-            if ispositive(ndense)
-                dwght[node] = mdweight(dmask, nwords, dnode, node, superwght)
-                deg += dwght[node]
-            end
-
-            degree[node] = deg
             key = mdkey(deg, superwght[node], external)
 
             if key > one(V)
@@ -804,51 +704,7 @@ function mdmain!(
                 mindeg += one(V)
             end
 
-            # if a dense node has a smaller key than every bound, it rejoins
-            # the quotient graph and is eliminated. `dmin` is a lower bound on
-            # the keys of the dense nodes: they are scanned only if it is
-            # below the minimum key
-            dj = zero(V)
-
-            if ispositive(nbypass) && !(mindeg <= total && mindeg <= dmin)
-                dkey = typemax(V)
-
-                for j in oneto(ndense)
-                    dnd = dnode[j]
-
-                    if ispositive(dnd)
-                        key = mdkey(ddeg[j], superwght[dnd], external)
-
-                        if key < dkey
-                            dkey = key; dj = j
-                        end
-                    end
-                end
-
-                dmin = dkey
-
-                if mindeg <= total && mindeg <= dkey
-                    dj = zero(V)
-                end
-            end
-
-            if ispositive(dj)
-                mdnode = dnode[dj]
-                nmissing -= 2 * (convert(Int, nbypass) - 1 - mdcount(dmask, nwords, mdnode))
-                nbypass -= one(V)
-                pfree = mdreinsert!(dj, neqns, pe, len, elen, iw, iwlen, pfree, heads,
-                    superwght, nwords, dindex, dnode, dmask, wext)
-                degree[mdnode] = ddeg[dj]
-
-                # its neighbors now reach it through their lists
-                dwgt = superwght[mdnode]
-                pstart = pe[mdnode]
-                pstop = pstart + convert(E, len[mdnode]) - one(E)
-
-                for p in pstart:pstop
-                    dwght[iw[p]] -= dwgt
-                end
-            elseif ispositive(deghead[mindeg])
+            if ispositive(deghead[mindeg])
                 # remove `mdnode` from the degree structure. The exact nodes
                 # at the minimum key go before the others are recomputed:
                 # their eliminations may touch those nodes and give them new
@@ -869,7 +725,7 @@ function mdmain!(
                 # recompute every node at the minimum key
                 mindeg, tag = mdvisit!(mindeg, pe, len, elen, iw, superwght,
                     degree, deghead, degnext, degprev, marker,
-                    tag, neqns, extlen, dwght, nbypass, external, offset)
+                    tag, neqns, extlen, external, offset)
             end
         end
 
@@ -878,20 +734,8 @@ function mdmain!(
 
         # `mdnode` is the last supernode
         if superwght[mdnode] >= wleft
+            rank += one(V)
             break
-        end
-
-        # the dense neighbors of `mdnode` lose it
-        if ispositive(nbypass)
-            # a key is at least the degree plus 1
-            dlow = mdlose!(ddeg, dmask, nwords, mdnode, superwght[mdnode])
-            dS = mdweight(dmask, nwords, dnode, mdnode, superwght)
-
-            if dlow < typemax(V)
-                dmin = min(dmin, dlow + one(V))
-            end
-        else
-            dS = zero(V)
         end
 
         # eliminate `mdnode` and perform quotient graph
@@ -899,15 +743,7 @@ function mdmain!(
         rchsze, pfree, delta, swght, wflg, lemax, fsze, fwght = mdelim!(mdnode,
             pe, len, elen, iw, iwlen, pfree, heads, neqns, superwght, degree,
             deghead, degnext, degprev, marker, wext, extlen, wflg, lemax,
-            dS, offset, external, twin, rank + one(V),
-            nbypass, nwords, dmask, ddeg)
-
-        # the nodes in the reachable set, and the dense neighbors of
-        # `mdnode`, become adjacent to the dense neighbors of `mdnode`
-        if ispositive(nbypass)
-            nmissing = mddense!(mdnode, pe[mdnode], rchsze, iw, dwght, superwght,
-                nwords, dnode, ddeg, dmask, nmissing)
-        end
+            offset, external, twin, rank + one(V))
 
         # merge the indistinguishable nodes of the reachable set, eliminate
         # some of them with `mdnode` (mass elimination), assign the bounds
@@ -917,17 +753,23 @@ function mdmain!(
         # set adjacent only to the new element and to them is not
         # indistinguishable from `mdnode`, and it must follow them (they
         # are numbered right after the supernode of `mdnode`)
-        mindeg, tag, mwght = mdupdate!(mdnode, rchsze, delta, dS, swght, fwght, pe,
+        mindeg, tag, mwght = mdupdate!(mdnode, rchsze, delta, swght, fwght, pe,
             len, elen, iw, superwght, degree, deghead, degnext,
             degprev, wext, marker, tag,
-            neqns, extlen, dwght, nwords, dmask, ddeg, nbypass, mindeg, external,
+            neqns, extlen, mindeg, external,
             mass && iszero(fsze), offset)
 
         rank += one(V) + fsze; wleft -= swght + fwght + mwght
         superwght[mdnode] = zero(V)
+    end
 
-        if ispositive(dS) && (ispositive(fsze) || mass)
-            dmin = zero(V)
+    # the dense nodes, the only nodes not yet numbered, are numbered last, in
+    # order
+    if ispositive(ndense)
+        @inbounds for node in oneto(neqns)
+            if iszero(degnext[node])
+                degnext[node] = -(neqns + rank); rank += one(V)
+            end
         end
     end
 
@@ -952,8 +794,8 @@ end
 # Each lies in every list of the reachable set, so only the shortest is
 # scanned. A node of it qualifies if it has never been in a reachable set
 # (its adjacency is then all in its list, and its degree is exact), its
-# degree and dense neighbors (and, with degree, its weight) are those of
-# `mdnode`, and its list holds no node outside the reachable set. Once
+# degree (and, with degree, its weight) is that of `mdnode`, and its list
+# holds no node outside the reachable set. Once
 # `mdnode` is eliminated, it is simplicial and has the key of `mdnode`. It
 # leaves the quotient graph, numbered right after the supernode of
 # `mdnode`: its weight is set to 0 before the lists are purged, so it drops
@@ -964,31 +806,27 @@ end
 # uneliminated neighbors holds the reachable set, which is formed there, in
 # place. Otherwise it is formed at `pfree`, after a compression if the tail of
 # `iw` is too short: it holds fewer than `neqns` nodes, and at most
-# `degree[mdnode] - dS` (each node weighs at least 1). That fits after a
-# compression: outside a rejoin, the lists take at most `nnz` entries, and
-# `iw` has at least `nnz + 2 neqns` (see `md`); a rejoining dense node has no
-# element.
+# `degree[mdnode]` (each node weighs at least 1). That fits after a
+# compression: the lists take at most `nnz` entries, and `iw` has at least
+# `nnz + 2 neqns` (see `md`).
 #
 # input parameters:
 #
 #   - `mdnode`: node of minimum degree
 #   - `neqns`: number of equations
 #   - `iwlen`: length of `iw`
-#   - `dS`: the weight of the dense neighbors of `mdnode`
 #   - `offset`: separates the keys of the lists that are not exact
 #   - `external`: the keys are external degrees (the false twins need not
 #     have the weight of `mdnode`)
 #   - `twin`: find the false twins of `mdnode`
 #   - `fnum`: the rank of the first false twin (the rank after that of
 #     `mdnode`)
-#   - `(nbypass, nwords, dmask)`: the dense nodes
 #
 # updated parameters:
 #
 #   - `(pe, len, elen, iw)`: quotient graph
 #   - `pfree`: the quotient graph is stored in `iw[1:pfree - 1]`
 #   - `heads`: working array of `mdcompress!`
-#   - `ddeg`: the degrees of the dense nodes, which lose the false twins
 #   - `superwght`: weight of the supernodes; on output, negative for
 #     `mdnode`
 #   - `degree`: on output, `degree[mdnode]` is the weight of the nodes in the
@@ -1008,8 +846,7 @@ end
 #     element `mdnode`
 #   - `(wext, extlen)`: for each node of the reachable set, the terms of its
 #     bound
-#   - `delta`: the weight of the reachable set, with the dense neighbors of
-#     `mdnode`
+#   - `delta`: the weight of the reachable set
 #   - `swght`: the weight of `mdnode`
 #   - `fsze`: the number of false twins of `mdnode` (supernodes)
 #   - `fwght`: their weight
@@ -1033,15 +870,10 @@ function mdelim!(
         extlen::AbstractVector{V},
         wflg::V,
         lemax::V,
-        dS::V,
         offset::V,
         external::Bool,
         twin::Bool,
         fnum::V,
-        nbypass::V,
-        nwords::Int,
-        dmask::AbstractVector{UInt64},
-        ddeg::AbstractVector{V},
     ) where {I, V, E}
     # the pivot leaves the quotient graph
     @inbounds swght = superwght[mdnode]; superwght[mdnode] = -swght
@@ -1054,7 +886,7 @@ function mdelim!(
     if inplace
         @inbounds rstart = pe[mdnode]
     else
-        @inbounds need = convert(E, min(degree[mdnode] - dS, neqns))
+        @inbounds need = convert(E, min(degree[mdnode], neqns))
 
         if pfree + need - one(E) > iwlen
             pfree = mdcompress!(neqns, pe, len, iw, pfree, heads)
@@ -1136,12 +968,12 @@ function mdelim!(
     end
 
     # false twins of `mdnode`: they lie in the list of `rbest`. Each is
-    # numbered (from `fnum`), leaves the degree lists and its dense
-    # neighbors, and gets weight 0 so that the purge below drops it
+    # numbered (from `fnum`), leaves the degree lists, and gets weight 0 so
+    # that the purge below drops it
     fsze = fwght = zero(V)
 
     if twin && lbest < typemax(V)
-        tdeg = rsum + dS
+        tdeg = rsum
         @inbounds pstart = pe[rbest] + convert(E, elen[rbest])
         @inbounds pstop = pe[rbest] + convert(E, len[rbest]) - one(E)
 
@@ -1150,8 +982,7 @@ function mdelim!(
 
             # cheapest tests first: the weight is in hand
             if ispositive(wght) && (external || wght == swght) &&
-                    degree[node] == tdeg && iszero(elen[node]) &&
-                    (!ispositive(nbypass) || mdsame(dmask, nwords, node, mdnode))
+                    degree[node] == tdeg && iszero(elen[node])
                 # every neighbor of `node` must lie in the reachable set
                 same = true
                 qstart = pe[node]
@@ -1166,11 +997,6 @@ function mdelim!(
 
                 if same
                     mdremove!(node, deghead, degnext, degprev, offset)
-
-                    if ispositive(nbypass)
-                        mdlose!(ddeg, dmask, nwords, node, wght)
-                    end
-
                     degnext[node] = -(neqns + fnum + fsze); fsze += one(V)
                     superwght[node] = zero(V); len[node] = zero(V); fwght += wght
                 end
@@ -1318,18 +1144,17 @@ function mdelim!(
 
     @inbounds pe[mdnode] = rstart; len[mdnode] = rchsze
     @inbounds degree[mdnode] = ewght; wext[mdnode] = one(V)
-    return rchsze, pfree, ewght + dS, swght, wflg, max(lemax, ewght), fsze, fwght
+    return rchsze, pfree, ewght, swght, wflg, max(lemax, ewght), fsze, fwght
 end
 
 # This routine updates the degree structure after the elimination of
 # `mdnode`. Indistinguishable nodes in the reachable set are detected by
 # hashing their quotient neighbors, and merged into supernodes. With mass
-# elimination, each supernode whose list holds only `mdnode`, and whose
-# dense neighbors are those of `mdnode`, is eliminated with `mdnode`; let
-# `m` be their weight (0 otherwise). Each other supernode of the reachable
-# set gets the bound
+# elimination, each supernode whose list holds only `mdnode` is eliminated
+# with `mdnode`; let `m` be their weight (0 otherwise). Each other supernode
+# of the reachable set gets the bound
 #
-#     delta - m - w(u) + wext[u] + (weight of its dense neighbors not adjacent to `mdnode`),
+#     delta - m - w(u) + wext[u],
 #
 # raised to its old bound minus `swght + fwght + m` if it was not formed by
 # a merge. It is exact if it equals the upper bound, the same expression
@@ -1341,9 +1166,7 @@ end
 #
 #   - `mdnode`: the eliminated node
 #   - `rchsze`: the size of the reachable set of `mdnode`, which is its list
-#   - `delta`: the weight of the reachable set, with the dense neighbors of
-#     `mdnode`
-#   - `dS`: the weight of the dense neighbors of `mdnode`
+#   - `delta`: the weight of the reachable set
 #   - `swght`: the weight of `mdnode`
 #   - `fwght`: the weight of the false twins of `mdnode` (see `mdelim!`)
 #   - `(pe, len, elen, iw)`: quotient graph
@@ -1356,8 +1179,6 @@ end
 # updated parameters:
 #
 #   - `mindeg`: new minimum key after degree update
-#   - `ddeg`: the degrees of the dense nodes, which lose the nodes eliminated
-#     with `mdnode`
 #   - `(superwght, degree)`: supernodes and their bounds
 #   - `(deghead, degnext, degprev)`: degree lists
 #   - `marker`: the hashes of the nodes of the reachable set (see `mdelim!`),
@@ -1368,7 +1189,6 @@ end
         mdnode::V,
         rchsze::V,
         delta::V,
-        dS::V,
         swght::V,
         fwght::V,
         pe::AbstractVector{E},
@@ -1385,11 +1205,6 @@ end
         tag::I,
         neqns::V,
         extlen::AbstractVector{V},
-        dwght::AbstractVector{V},
-        nwords::Int,
-        dmask::AbstractVector{UInt64},
-        ddeg::AbstractVector{V},
-        nbypass::V,
         mindeg::V,
         external::Bool,
         mass::Bool,
@@ -1457,10 +1272,6 @@ end
                         end
                     end
 
-                    if same && ispositive(nbypass)
-                        same = mdsame(dmask, nwords, inode, jnode)
-                    end
-
                     if same
                         # `jnode` is indistinguishable from `inode`: merge
                         # them into a new supernode, and remove `jnode` from
@@ -1483,20 +1294,15 @@ end
     end
 
     # keep the principal nodes of the reachable set. With mass elimination,
-    # a node whose list holds only `mdnode`, and whose dense neighbors are
-    # those of `mdnode`, is eliminated with `mdnode` instead: with degree, it
-    # is indistinguishable from `mdnode`. Its dense neighbors lose it
+    # a node whose list holds only `mdnode` is eliminated with `mdnode`
+    # instead: with degree, it is indistinguishable from `mdnode`
     mwght = zero(V)
 
     if mass
         @inbounds for r in rstart:rstop
             rnode = iw[r]; rwght = superwght[rnode]
 
-            if ispositive(rwght) && isone(len[rnode]) && (!ispositive(nbypass) || dwght[rnode] == dS)
-                if ispositive(nbypass)
-                    mdlose!(ddeg, dmask, nwords, rnode, rwght)
-                end
-
+            if ispositive(rwght) && isone(len[rnode])
                 superwght[rnode] = zero(V); degprev[rnode] = zero(V); degnext[rnode] = -mdnode
                 len[rnode] = elen[rnode] = zero(V); mwght += rwght
             end
@@ -1524,11 +1330,6 @@ end
         if ispositive(rwght)
             degprev[rnode] = degnext[rnode] = zero(V)
             lo = delta - rwght + wext[rnode]
-
-            if ispositive(nbypass)
-                lo += dwght[rnode] - dS
-            end
-
             hi = lo + extlen[rnode]
 
             # a supernode not formed by a merge lost at most `swght` neighbors
@@ -1565,7 +1366,7 @@ end
     if ispositive(zhead)
         mindeg, tag = mdrecompute!(zhead, mdnode, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, marker,
-            tag, neqns, extlen, dwght, nbypass, mindeg, external, offset)
+            tag, neqns, extlen, mindeg, external, offset)
     end
 
     # with external degree, return the other nodes to the degree structure
@@ -1604,8 +1405,6 @@ function mdvisit!(
         tag::I,
         neqns::V,
         extlen::AbstractVector{V},
-        dwght::AbstractVector{V},
-        nbypass::V,
         external::Bool,
         offset::V,
     ) where {I, V, E}
@@ -1642,7 +1441,7 @@ function mdvisit!(
 
     mindeg, tag = mdrecompute!(head, elmnt, pe, len, elen, iw,
         superwght, degree, deghead, degnext, degprev, marker,
-        tag, neqns, extlen, dwght, nbypass, mindeg, external, offset)
+        tag, neqns, extlen, mindeg, external, offset)
 
     return mindeg, tag
 end
@@ -1653,8 +1452,8 @@ end
 # leave its list), the list of each other element of the nodes is scanned
 # once and partitioned in place, its nodes outside `elmnt` first, and the
 # external degree of each node is the weight of
-# `elmnt`, of the union of these nodes and of its uneliminated neighbors, and
-# of its dense neighbors, minus its own weight. The nodes become exact and are
+# `elmnt` and of the union of these nodes and of its uneliminated neighbors,
+# minus its own weight. The nodes become exact and are
 # inserted into the degree lists. Returns the new minimum key and the tag.
 #
 # The elements in the lists of all the nodes (the core) are united once, as
@@ -1686,8 +1485,6 @@ end
         tag::I,
         neqns::V,
         extlen::AbstractVector{V},
-        dwght::AbstractVector{V},
-        nbypass::V,
         mindeg::V,
         external::Bool,
         offset::V,
@@ -1841,11 +1638,6 @@ end
         end
 
         deg += ewght - superwght[znode]
-
-        if ispositive(nbypass)
-            deg += dwght[znode]
-        end
-
         degree[znode] = deg
         key = mdkey(deg, superwght[znode], external)
         mindeg = mdinsert!(key, mindeg, znode, true, deghead, degnext, degprev, offset)
@@ -1955,307 +1747,6 @@ end
 @inline function mdmix(x::Integer)
     z = (x % UInt64) * 0x9e3779b97f4a7c15
     return z ⊻ (z >>> 29)
-end
-
-# ---------------------------------------------------------------------
-# dense nodes
-# ---------------------------------------------------------------------
-#
-# The dense nodes are kept out of the quotient graph. Fill never passes
-# through an uneliminated node, so the quotient graph of the remaining nodes
-# represents their elimination graph exactly. The adjacency between any node
-# and the dense nodes is kept in bit masks: when a node is eliminated, its
-# neighbors become a clique, so every node in its reachable set (and every
-# dense neighbor) acquires its dense neighbors. A dense node rejoins the
-# quotient graph when its degree is minimum, and is then eliminated.
-#
-#   - `ndense`: number of dense nodes
-#   - `nwords`: number of 64-bit words in a mask
-#   - `dindex`: `dindex[node]` is the index of a dense node, or 0
-#   - `dnode`: `dnode[j]` is the dense node with index `j`; it is negated
-#     once the node rejoins the quotient graph
-#   - `ddeg`: `ddeg[j]` is the weighted external degree of dense node `j`
-#   - `dmask`: `dmask[(node - 1) * nwords + w]` is word `w` of the mask of
-#     the dense neighbors of `node`
-
-@inline function mdoffset(nwords::Int, node::Integer)
-    return (convert(Int, node) - 1) * nwords
-end
-
-@inline function mdsetbit!(dmask::AbstractVector{UInt64}, nwords::Int, node::Integer, j::Integer)
-    jj = convert(Int, j) - 1
-    @inbounds dmask[mdoffset(nwords, node) + (jj >> 6) + 1] |= one(UInt64) << (jj & 63)
-    return
-end
-
-# number of dense neighbors of `node`
-function mdcount(dmask::AbstractVector{UInt64}, nwords::Int, node::Integer)
-    off = mdoffset(nwords, node); cnt = 0
-
-    @inbounds for w in 1:nwords
-        cnt += count_ones(dmask[off + w])
-    end
-
-    return cnt
-end
-
-# weight of the dense neighbors of `node`
-function mdweight(dmask::AbstractVector{UInt64}, nwords::Int, dnode::AbstractVector{V}, node::Integer, superwght::AbstractVector{V}) where {V}
-    off = mdoffset(nwords, node); wght = zero(V)
-
-    @inbounds for w in 1:nwords
-        word = dmask[off + w]
-
-        while !iszero(word)
-            j = ((w - 1) << 6) + trailing_zeros(word) + 1
-            wght += superwght[abs(dnode[j])]
-            word &= word - one(UInt64)
-        end
-    end
-
-    return wght
-end
-
-# do `inode` and `jnode` have the same dense neighbors?
-function mdsame(dmask::AbstractVector{UInt64}, nwords::Int, inode::Integer, jnode::Integer)
-    ioff = mdoffset(nwords, inode); joff = mdoffset(nwords, jnode)
-    same = true
-
-    @inbounds for w in 1:nwords
-        if dmask[ioff + w] != dmask[joff + w]
-            same = false
-            break
-        end
-    end
-
-    return same
-end
-
-# This routine computes the degrees of the dense nodes. On input, the masks
-# hold the original adjacency to the dense nodes.
-function mddenseinit!(ddeg::AbstractVector{V}, dmask::AbstractVector{UInt64}, nwords::Int, ndense::V, dnode::AbstractVector{V}, neqns::V, vwght::AbstractVector{V}) where {V}
-    @inbounds for j in oneto(ndense)
-        ddeg[j] = zero(V)
-    end
-
-    @inbounds for node in oneto(neqns)
-        off = mdoffset(nwords, node); wght = vwght[node]
-
-        for w in 1:nwords
-            word = dmask[off + w]
-
-            while !iszero(word)
-                j = ((w - 1) << 6) + trailing_zeros(word) + 1
-                ddeg[j] += wght
-                word &= word - one(UInt64)
-            end
-        end
-    end
-
-    return
-end
-
-# This routine removes `node`, which is about to be eliminated, from the
-# degrees of its dense neighbors. Returns the lowest of their new degrees
-# (`typemax(V)` if it has none).
-function mdlose!(ddeg::AbstractVector{V}, dmask::AbstractVector{UInt64}, nwords::Int, node::V, wght::V) where {V}
-    off = mdoffset(nwords, node); dlow = typemax(V)
-
-    @inbounds for w in 1:nwords
-        word = dmask[off + w]
-
-        while !iszero(word)
-            j = ((w - 1) << 6) + trailing_zeros(word) + 1
-            ddeg[j] -= wght; dlow = min(dlow, ddeg[j])
-            word &= word - one(UInt64)
-        end
-    end
-
-    return dlow
-end
-
-# This routine updates the adjacency to the dense nodes after the elimination
-# of `mdnode`: its neighbors become a clique, so every node in the reachable
-# set, and every dense neighbor of `mdnode`, becomes adjacent to every dense
-# neighbor of `mdnode`. The reachable set is `iw[rstart:rstart + rchsze - 1]`.
-# Each new adjacency is added to the dense weight
-# `dwght` of the node, or to the degree `ddeg` of the dense node. Returns the
-# updated number `nmissing` of ordered pairs of nonadjacent dense nodes.
-function mddense!(
-        mdnode::V,
-        rstart::E,
-        rchsze::V,
-        iw::AbstractVector{V},
-        dwght::AbstractVector{V},
-        superwght::AbstractVector{V},
-        nwords::Int,
-        dnode::AbstractVector{V},
-        ddeg::AbstractVector{V},
-        dmask::AbstractVector{UInt64},
-        nmissing::Int,
-    ) where {V, E}
-    moff = mdoffset(nwords, mdnode)
-
-    # skip if `mdnode` has no dense neighbors
-    empty = true
-
-    @inbounds for w in 1:nwords
-        if !iszero(dmask[moff + w])
-            empty = false
-            break
-        end
-    end
-
-    if !empty
-        @inbounds for r in rstart:(rstart + convert(E, rchsze) - one(E))
-            rnode = iw[r]
-            roff = mdoffset(nwords, rnode); rdeg = zero(V); rwght = superwght[rnode]
-
-            for w in 1:nwords
-                mword = dmask[moff + w]; rword = dmask[roff + w]
-                new = mword & ~rword
-
-                while !iszero(new)
-                    j = ((w - 1) << 6) + trailing_zeros(new) + 1
-                    rdeg += superwght[dnode[j]]; ddeg[j] += rwght
-                    new &= new - one(UInt64)
-                end
-
-                dmask[roff + w] = mword | rword
-            end
-
-            dwght[rnode] += rdeg
-        end
-
-        # the dense neighbors of `mdnode` become pairwise adjacent
-        if ispositive(nmissing)
-            @inbounds for w in 1:nwords
-                word = dmask[moff + w]
-
-                while !iszero(word)
-                    j = ((w - 1) << 6) + trailing_zeros(word) + 1
-                    word &= word - one(UInt64)
-                    dj = dnode[j]; joff = mdoffset(nwords, dj); jdeg = zero(V)
-
-                    for v in 1:nwords
-                        mword = dmask[moff + v]
-
-                        if v == w
-                            # a node is not its own neighbor
-                            mword &= ~(one(UInt64) << ((j - 1) & 63))
-                        end
-
-                        new = mword & ~dmask[joff + v]
-
-                        while !iszero(new)
-                            l = ((v - 1) << 6) + trailing_zeros(new) + 1
-                            jdeg += superwght[dnode[l]]; nmissing -= 1
-                            new &= new - one(UInt64)
-                        end
-
-                        dmask[joff + v] |= mword
-                    end
-
-                    ddeg[j] += jdeg
-                end
-            end
-        end
-    end
-
-    return nmissing
-end
-
-# This routine returns the dense node with index `j` to the quotient graph.
-# Its neighbors are the uneliminated principal nodes, other than dense nodes,
-# whose masks contain `j`; they become its list, and it is appended to each
-# of their lists (which are moved to the end of `iw` to make room). The node
-# is then removed from every mask. Returns the updated `pfree`.
-#
-# The lists fit after a compression. Outside a rejoin, each list is no
-# longer than in the quotient graph that keeps the dense nodes, so the lists
-# take at most `nnz` entries. Until the dense node is eliminated, the rejoin
-# adds fewer than `2 neqns`: its list and one entry per neighbor, or, while a
-# list is copied, the entries appended so far and that list.
-#
-# working arrays:
-#
-#   - `wext`: chains the neighbors of the dense node, in order (it is not in
-#     use for uneliminated nodes between eliminations)
-#   - `heads`: working array of `mdcompress!`
-function mdreinsert!(
-        j::V,
-        neqns::V,
-        pe::AbstractVector{E},
-        len::AbstractVector{V},
-        elen::AbstractVector{V},
-        iw::AbstractVector{V},
-        iwlen::E,
-        pfree::E,
-        heads::AbstractVector{UInt64},
-        superwght::AbstractVector{V},
-        nwords::Int,
-        dindex::AbstractVector{V},
-        dnode::AbstractVector{V},
-        dmask::AbstractVector{UInt64},
-        wext::AbstractVector{V},
-    ) where {V, E}
-    @inbounds dnd = dnode[j]; dnode[j] = -dnd
-    w = ((convert(Int, j) - 1) >> 6) + 1
-    bit = one(UInt64) << ((convert(Int, j) - 1) & 63)
-    cnt = zero(V); head = tail = zero(V)
-
-    @inbounds for node in oneto(neqns)
-        i = mdoffset(nwords, node) + w
-
-        if !iszero(dmask[i] & bit)
-            dmask[i] &= ~bit
-
-            if !ispositive(dindex[node]) && ispositive(superwght[node])
-                # move the list of `node` to the end of `iw` and append
-                # `dnd` to it
-                nlen = len[node]
-
-                if pfree + convert(E, nlen) > iwlen
-                    pfree = mdcompress!(neqns, pe, len, iw, pfree, heads)
-                    @assert pfree + convert(E, nlen) <= iwlen
-                end
-
-                pstart = pe[node]; pe[node] = pfree
-
-                for p in pstart:(pstart + convert(E, nlen) - one(E))
-                    iw[pfree] = iw[p]; pfree += one(E)
-                end
-
-                iw[pfree] = dnd; pfree += one(E)
-                len[node] = nlen + one(V)
-                cnt += one(V)
-
-                if iszero(tail)
-                    head = node
-                else
-                    wext[tail] = node
-                end
-
-                tail = node
-            end
-        end
-    end
-
-    if pfree + convert(E, cnt) - one(E) > iwlen
-        pfree = mdcompress!(neqns, pe, len, iw, pfree, heads)
-        @assert pfree + convert(E, cnt) - one(E) <= iwlen
-    end
-
-    @inbounds pe[dnd] = pfree
-
-    node = head
-
-    @inbounds for k in oneto(cnt)
-        iw[pfree] = node; pfree += one(E); node = wext[node]
-    end
-
-    @inbounds len[dnd] = cnt; elen[dnd] = zero(V)
-    return pfree
 end
 
 # This routine compresses the quotient graph storage `iw`, releasing the

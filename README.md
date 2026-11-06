@@ -114,7 +114,9 @@ the graph.
     the graph is that of its pattern plus its transpose
   - `external`: minimize the external degree instead of the degree
   - `dense`: vertices with more than `max(16, dense * sqrt(neqns))` neighbors
-    are handled as dense (a negative value disables this)
+    (other than themselves) are dense, and are removed from the graph and
+    ordered last, as AMD does (a negative value disables this). The ordering
+    is then exact for the graph without them
   - `mass`: mass elimination
   - `twin`: false-twin detection
   - `compress`: merge the vertices with the same closed neighborhood first

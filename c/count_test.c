@@ -138,7 +138,7 @@ int main(void) {
     printf("%d runs\n", nruns);
 
 #ifdef MD_COUNT
-    const char *names[MD_NCOUNT] = {"ELIM", "COMPRESS", "DENSE",
+    const char *names[MD_NCOUNT] = {"ELIM", "COMPRESS",
         "PASS_MARK", "PASS_SCAN", "PASS_UNION", "PASS_VAR",
         "WATER_MARK", "WATER_SCAN", "WATER_UNION", "WATER_VAR",
         "STEPS", "TOUCHED", "CERTIFIED", "RECOMP_PASS", "RECOMP_WATER", "GROUPS", "RISE"};

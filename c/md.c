@@ -43,21 +43,6 @@
 #define md_prefetch(A, i) ((void) 0)
 #endif
 
-// number of ones in `x`
-static inline int64_t md_popcount(uint64_t x) {
-#if defined(__GNUC__) || defined(__clang__)
-    return (int64_t) __builtin_popcountll(x);
-#else
-    int64_t cnt = 0;
-
-    while (x != 0) {
-        x &= x - 1; cnt += 1;
-    }
-
-    return cnt;
-#endif
-}
-
 // number of trailing zeros of `x`, which is not 0
 static inline int64_t md_ctz(uint64_t x) {
 #if defined(__GNUC__) || defined(__clang__)
@@ -110,45 +95,6 @@ static void *md_malloc(size_t count, size_t size) {
     }
 
     return p;
-}
-
-// the candidates for the dense nodes: sorted by key (minus the degree), then
-// by node
-typedef struct {
-    int64_t key;
-    int64_t node;
-} md_pair;
-
-static int md_pair_compare(const void *a, const void *b) {
-    const md_pair *x = (const md_pair *) a;
-    const md_pair *y = (const md_pair *) b;
-    int cmp = 0;
-
-    if (x->key < y->key) {
-        cmp = -1;
-    } else if (x->key > y->key) {
-        cmp = 1;
-    } else if (x->node < y->node) {
-        cmp = -1;
-    } else if (x->node > y->node) {
-        cmp = 1;
-    }
-
-    return cmp;
-}
-
-static int md_pair_compare_node(const void *a, const void *b) {
-    const md_pair *x = (const md_pair *) a;
-    const md_pair *y = (const md_pair *) b;
-    int cmp = 0;
-
-    if (x->node < y->node) {
-        cmp = -1;
-    } else if (x->node > y->node) {
-        cmp = 1;
-    }
-
-    return cmp;
 }
 
 #ifdef MD_BENCH
@@ -320,10 +266,8 @@ void md_defaults(md_options *options) {
             }                                                                        \
         }                                                                            \
                                                                                      \
-        /* the lists never take more than `nnz` entries of `iw`, except while a      \
-           dense node rejoins, which adds fewer than `2 neqns`. The extra            \
-           `max(nnz / 5, neqns) + neqns` covers that, and leaves room between        \
-           compressions */                                                           \
+        /* the lists never take more than `nnz` entries of `iw`: the extra           \
+           `max(nnz / 5, neqns) + neqns` leaves room between compressions */         \
         *iwlen = nnz + MD_MAX(nnz / 5, (int64_t) neqns) + (int64_t) neqns;           \
         return status;                                                               \
     }

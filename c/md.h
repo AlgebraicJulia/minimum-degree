@@ -38,8 +38,9 @@ typedef struct {
     int external;   /* minimize the external degree instead of the degree
                        (default 1) */
     double dense;   /* vertices with more than max(16, dense * sqrt(n))
-                       neighbors are handled as dense; a negative value
-                       disables this (default 10.0) */
+                       neighbors (other than themselves) are dense, and are
+                       removed from the graph and ordered last, as AMD does;
+                       a negative value disables this (default 10.0) */
     int mass;       /* mass elimination (default 1) */
     int twin;       /* false-twin detection (default 1) */
     int compress;   /* merge the vertices with the same closed neighborhood
@@ -80,13 +81,11 @@ MD_API double md_core_seconds(void);
 
 #ifdef MD_COUNT
 /* work counters of the last ordering (a counting build, compiled with
- * -DMD_COUNT; not for timing). The first eleven count entries of adjacency
+ * -DMD_COUNT; not for timing). The first ten count entries of adjacency
  * lists read, each once by each loop that runs over its list:
  *
  *   MD_C_ELIM         the elimination (mdelim, mdupdate), outside the passes
  *   MD_C_COMPRESS     entries moved by the compression of iw
- *   MD_C_DENSE        dense nodes: rejoins, and the reachable sets read to
- *                     update the masks
  *   MD_C_PASS_*       the eager passes (recomputations from mdupdate):
  *                     marking the nodes of the element (MARK), partitioning
  *                     the other elements (SCAN), the unions (UNION), and the
@@ -95,8 +94,8 @@ MD_API double md_core_seconds(void);
  *
  * and the others count events:
  *
- *   MD_C_STEPS        eliminations (nodes of degree 0 at the start, pivots,
- *                     and rejoining dense nodes)
+ *   MD_C_STEPS        eliminations (nodes of degree 0 at the start, and
+ *                     pivots)
  *   MD_C_TOUCHED      the principal nodes of each reachable set, after the
  *                     merges and before mass elimination
  *   MD_C_CERTIFIED    those of them exact at their initial bound
@@ -104,7 +103,7 @@ MD_API double md_core_seconds(void);
  *   MD_C_RECOMP_WATER nodes recomputed at the water
  *   MD_C_GROUPS       groups recomputed at the water
  *   MD_C_RISE         the total rise of the water walk */
-enum { MD_C_ELIM, MD_C_COMPRESS, MD_C_DENSE,
+enum { MD_C_ELIM, MD_C_COMPRESS,
        MD_C_PASS_MARK, MD_C_PASS_SCAN, MD_C_PASS_UNION, MD_C_PASS_VAR,
        MD_C_WATER_MARK, MD_C_WATER_SCAN, MD_C_WATER_UNION, MD_C_WATER_VAR,
        MD_C_STEPS, MD_C_TOUCHED, MD_C_CERTIFIED,

@@ -30,6 +30,25 @@ using Test
         @test sort(invp) == 1:n
     end
 
+    # dense vertices are removed and ordered last, in order: two hubs (41 and
+    # 42) adjacent to every vertex of a path on 40 vertices
+    adj = [Int[] for _ in 1:42]
+
+    for u in 1:39
+        push!(adj[u], u + 1); push!(adj[u + 1], u)
+    end
+
+    for h in 41:42, v in 1:40
+        push!(adj[h], v); push!(adj[v], h)
+    end
+
+    xadj = cumsum([1; length.(adj)]); adjncy = reduce(vcat, adj)
+
+    for external in (false, true)
+        invp = md(42, xadj, adjncy; external, dense = 0.0)
+        @test sort(invp) == 1:42 && invp[41] == 41 && invp[42] == 42
+    end
+
     # a path, a cycle and a wheel on 6 vertices, every weight 100
     for edges in ([(1, 2), (2, 3), (3, 4), (4, 5), (5, 6)],
             [(1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 1)],

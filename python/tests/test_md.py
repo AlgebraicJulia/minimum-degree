@@ -37,6 +37,28 @@ def test_heavy():
     assert sorted(invp.tolist()) == list(range(6))
 
 
+def test_dense():
+    # two hubs (40 and 41) adjacent to every vertex of a path on 40 vertices
+    # are dense, removed and ordered last
+    adj = [[] for _ in range(42)]
+
+    for u in range(39):
+        adj[u].append(u + 1)
+        adj[u + 1].append(u)
+
+    for h in (40, 41):
+        for v in range(40):
+            adj[h].append(v)
+            adj[v].append(h)
+
+    xadj = np.cumsum([0] + [len(a) for a in adj])
+    adjncy = [v for a in adj for v in a]
+
+    for external in (False, True):
+        invp = md(xadj, adjncy, external=external, dense=0.0).tolist()
+        assert sorted(invp) == list(range(42)) and invp[40] == 40 and invp[41] == 41
+
+
 def test_empty():
     assert md([0], []).tolist() == []
 
@@ -60,6 +82,7 @@ if __name__ == "__main__":
     test_matrix()
     test_options()
     test_heavy()
+    test_dense()
     test_empty()
     test_check()
     print("ok")
