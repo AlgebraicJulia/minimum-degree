@@ -98,9 +98,6 @@ suffice. The functions return `MD_OK`, `MD_INVALID`, `MD_TOO_LARGE` or
 
 `md_order` checks its vectors, but not that the graph is symmetric, with no
 repeated entries; `md_check` (`md_l_check`) checks that too, in O(m + n) time.
-Compiled with `-DMD_BENCH`, the library also provides `md_core_seconds()`, the
-time of the last ordering without the checks, the allocation and the copy of
-the graph.
 
 ## Parameters
 

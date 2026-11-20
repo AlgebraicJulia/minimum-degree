@@ -171,13 +171,6 @@ static void MDF(md_impl)(
         const V *xadj,
         const V *adjncy,
         V ndense) {
-#ifdef MD_COUNT
-    for (int k = 0; k < MD_NCOUNT; k++) {
-        md_count[k] = 0;
-    }
-
-    md_count_h = -1;
-#endif
 
     // copy the adjacency structure into `iw`, dropping self loops (the graph
     // is indexed from 0), and keep the sum of the closed neighborhood of each
@@ -235,10 +228,6 @@ static void MDF(md_impl)(
         }
     }
 
-#ifdef MD_BENCH
-    double start = md_clock();
-#endif
-
     // with `compress`, find the classes of nodes with the same closed
     // neighborhood: `extlen[node]` is the first node of the class of `node`,
     // or 0 if `node` is first. They are merged before the minimum degree
@@ -278,19 +267,6 @@ static void MDF(md_impl)(
         wext, extlen, pe, len,
         elen, iw, iwlen, heads, pfree, total, neqns, external, mass, twin,
         nmerge > 0, vwght, ndense);
-
-#ifdef MD_BENCH
-    md_seconds = md_clock() - start;
-#endif
-
-#ifdef MD_COUNT
-    // the water rises fewer than n times (2n with external degree)
-    if (external) {
-        assert(total == 0 || md_count[MD_C_RISE] < 2 * (int64_t) total);
-    } else {
-        assert(total == 0 || md_count[MD_C_RISE] < (int64_t) total);
-    }
-#endif
 }
 
 // This routine finds the classes of nodes with the same closed
@@ -482,15 +458,12 @@ static V MDF(mdclasses)(
 //     absorption). The ordering is exact for these supernodes.
 //   - `mass`: mass elimination. Each node of the reachable set whose only
 //     neighbors are those of the new element (it lies in no other element,
-//     and has no other neighbors) is eliminated with the pivot. With degree such a node is
-//     indistinguishable from the pivot, so the ordering remains exact. With
-//     `external` it need not be, and the ordering is no longer exact.
+//     and has no other neighbors) is eliminated with the pivot.
 //   - `twin`: false-twin elimination. Each node outside the reachable set
 //     whose neighbors are exactly the reachable set of the pivot, which has
 //     never been in a reachable set, and whose weight (with degree) is that
-//     of the pivot, is eliminated right after the pivot's supernode. With degree it is then simplicial and of minimum
-//     degree, so the ordering remains exact. With `external` it need not be,
-//     and the ordering is no longer exact (see `mdelim`).
+//     of the pivot, is eliminated right after the pivot's supernode (see
+//     `mdelim`).
 //   - `merged`: merge the classes in `extlen` first. On input, `extlen[node]`
 //     is the first node of the class of `node` (nodes with the same closed
 //     neighborhood), or 0 if `node` is first (see `mdclasses`)
@@ -653,7 +626,6 @@ static void MDF(mdmain)(
             } else {
                 // eliminate node of degree 0
                 degnext[node] = -(neqns + rank); rank += 1; wleft -= superwght[node];
-                MD_ADD(MD_C_STEPS, 1); MD_WALK(key - 1);
             }
         }
     }
@@ -699,14 +671,12 @@ static void MDF(mdmain)(
                 }
             } else {
                 // recompute every node at the minimum key
-                MD_WALK(mindeg - 1);
                 MDF(mdvisit)(mindeg, pe, len, elen, iw, superwght,
                     degree, deghead, degnext, degprev, marker,
                     &tag, neqns, extlen, external, offset, &mindeg);
             }
         }
 
-        MD_ADD(MD_C_STEPS, 1); MD_WALK(MDF(mdkey)(degree[mdnode], superwght[mdnode], external) - 1);
         degprev[mdnode] = 0;
         degnext[mdnode] = -(neqns + rank);
 
@@ -894,7 +864,6 @@ static void MDF(mdelim)(
     // weight of the set, and `rbest` its node with the fewest neighbors in
     // its list (`lbest`)
     V rchsze = 0; V rsum = 0; V rbest = 0; V lbest = V_MAX;
-    MD_ADD(MD_C_ELIM, estop - estart + 1);
 
     for (E i = estart; i <= estop; i++) {
         V elmnt = iw[i];
@@ -905,7 +874,6 @@ static void MDF(mdelim)(
 
         E jstart = pe[elmnt];
         E jstop = jstart + (E) len[elmnt] - 1;
-        MD_ADD(MD_C_ELIM, jstop - jstart + 1);
 
         for (E j = jstart; j <= jstop; j++) {
             V node = iw[j]; V wght = superwght[node];
@@ -933,8 +901,6 @@ static void MDF(mdelim)(
         // element absorption: `elmnt` is absorbed into the new element
         len[elmnt] = 0; wext[elmnt] = 0;
     }
-
-    MD_ADD(MD_C_ELIM, nstop - nstart + 1);
 
     for (E i = nstart; i <= nstop; i++) {
         V node = iw[i]; V wght = superwght[node];
@@ -966,7 +932,6 @@ static void MDF(mdelim)(
         V tdeg = rsum;
         E pstart = pe[rbest] + (E) elen[rbest];
         E pstop = pe[rbest] + (E) len[rbest] - 1;
-        MD_ADD(MD_C_ELIM, pstop - pstart + 1);
 
         for (E p = pstart; p <= pstop; p++) {
             V node = iw[p]; V wght = superwght[node];
@@ -980,7 +945,6 @@ static void MDF(mdelim)(
                 E qstop = qstart + (E) len[node] - 1;
 
                 for (E q = qstart; q <= qstop; q++) {
-                    MD_ADD(MD_C_ELIM, 1);
 
                     if (superwght[iw[q]] > 0) {
                         same = 0;
@@ -1019,13 +983,11 @@ static void MDF(mdelim)(
     // for each element adjacent to a node in the reachable set, compute
     // `wext[elmnt] - wflg`, the weight of the nodes of `elmnt` outside the
     // reachable set
-    MD_ADD(MD_C_ELIM, rchsze);
 
     for (E r = rstart; r <= rstop; r++) {
         V rnode = iw[r]; V rwght = -superwght[rnode];
         E jstart = pe[rnode];
         E jstop = jstart + (E) elen[rnode] - 1;
-        MD_ADD(MD_C_ELIM, jstop - jstart + 1);
 
         for (E j = jstart; j <= jstop; j++) {
             V elmnt = iw[j]; V we = wext[elmnt];
@@ -1044,7 +1006,6 @@ static void MDF(mdelim)(
     // buckets are many (32 to 64 per node), so that a node is seldom in a
     // bucket with another
     int64_t hashmask = MD_MIN(md_nextpow2(MD_MAX(32 * (int64_t) rchsze, (int64_t) 1)), md_prevpow2(2 * ((int64_t) offset))) - 1;
-    MD_ADD(MD_C_ELIM, rchsze);
 
     for (E r = rstart; r <= rstop; r++) {
         V rnode = iw[r];
@@ -1061,7 +1022,6 @@ static void MDF(mdelim)(
         E p2 = p1 + (E) elen[rnode] - 1;
         E p3 = p2 + 1;
         E p4 = p1 + (E) len[rnode] - 1;
-        MD_ADD(MD_C_ELIM, p4 - p1 + 1);
         E pn = p1; uint64_t hash = 0;
         V elmax = 0; V elsum = 0; V nwght = 0;
 
@@ -1130,7 +1090,6 @@ static void MDF(mdelim)(
     // the reachable set is the list of the new element `mdnode`: make its
     // nodes active again
     V ewght = 0;
-    MD_ADD(MD_C_ELIM, rchsze);
 
     for (E r = rstart; r <= rstop; r++) {
         V rnode = iw[r]; V rwght = -superwght[rnode]; superwght[rnode] = rwght;
@@ -1222,7 +1181,6 @@ static void MDF(mdupdate)(
     E rstart = pe[mdnode]; E rstop = rstart + (E) rchsze - 1;
 
     // for each hash bucket of the reachable set, do the following...
-    MD_ADD(MD_C_ELIM, rchsze);
 
     for (E r = rstart; r <= rstop; r++) {
         V hash = degprev[iw[r]];
@@ -1256,8 +1214,6 @@ static void MDF(mdupdate)(
                 E pstart = pe[inode];
                 E pstop = pstart + (E) len[inode] - 1;
 
-                MD_ADD(MD_C_ELIM, pstop - pstart + 1);
-
                 for (E p = pstart; p <= pstop; p++) {
                     marker[iw[p]] = tag;
                 }
@@ -1274,7 +1230,6 @@ static void MDF(mdupdate)(
                         E qstop = qstart + (E) len[jnode] - 1;
 
                         for (E q = qstart; q <= qstop; q++) {
-                            MD_ADD(MD_C_ELIM, 1);
 
                             if (marker[iw[q]] != tag) {
                                 same = 0;
@@ -1304,22 +1259,12 @@ static void MDF(mdupdate)(
         }
     }
 
-#ifdef MD_COUNT
-    // the principal nodes of the reachable set (these reads are not counted)
-    for (E r = rstart; r <= rstop; r++) {
-        if (superwght[iw[r]] > 0) {
-            md_count[MD_C_TOUCHED] += 1;
-        }
-    }
-#endif
-
     // keep the principal nodes of the reachable set. With mass elimination,
     // a node whose list holds only `mdnode` is eliminated with `mdnode`
     // instead: with degree, it is indistinguishable from `mdnode`
     V mwght = 0;
 
     if (mass) {
-        MD_ADD(MD_C_ELIM, rchsze);
 
         for (E r = rstart; r <= rstop; r++) {
             V rnode = iw[r]; V rwght = superwght[rnode];
@@ -1345,7 +1290,6 @@ static void MDF(mdupdate)(
     // degree, chain the nodes for the eager pass through `degnext`, in order,
     // and the others in a second chain
     V zhead = 0; V ztail = 0; V ohead = 0; V otail = 0;
-    MD_ADD(MD_C_ELIM, rchsze);
 
     for (E r = rstart; r <= rstop; r++) {
         V rnode = iw[r]; V rwght = superwght[rnode];
@@ -1361,7 +1305,6 @@ static void MDF(mdupdate)(
             }
 
             degree[rnode] = lo; extlen[rnode] = hi;
-            MD_ADD(MD_C_CERTIFIED, lo == hi);
 
             if (!external) {
                 V key = MDF(mdkey)(lo, rwght, external);
@@ -1388,7 +1331,6 @@ static void MDF(mdupdate)(
 
     // the eager pass
     if (zhead > 0) {
-        MD_SET_RC(MD_C_PASS_MARK);
         MDF(mdrecompute)(zhead, mdnode, pe, len, elen, iw,
             superwght, degree, deghead, degnext, degprev, marker,
             &tag, neqns, extlen, &mindeg, external, offset);
@@ -1404,30 +1346,6 @@ static void MDF(mdupdate)(
         mindeg = MDF(mdinsert)(key, mindeg, rnode, degree[rnode] == extlen[rnode], deghead, degnext, degprev, offset);
         rnode = rnext;
     }
-
-#ifdef MD_COUNT
-    // the end of the elimination: the walk is at `max(0, min(phi, l))`, where
-    // `phi` is the floor of the eager pass (`max(0, delta - 1)` with degree)
-    // and `l` the least key minus 1 in the reachable set, now (these reads are
-    // not counted)
-    int64_t phi = (int64_t) MD_MAX((V) 0, efloor);
-
-    if (!external) {
-        phi = MD_MAX((int64_t) 0, (int64_t) delta - 1);
-    }
-
-    int64_t lmin = phi;
-
-    for (E r = rstart; r <= rstop; r++) {
-        V rnode = iw[r];
-
-        if (superwght[rnode] > 0) {
-            lmin = MD_MIN(lmin, (int64_t) MDF(mdkey)(degree[rnode], superwght[rnode], external) - 1);
-        }
-    }
-
-    md_count_h = MD_MAX((int64_t) 0, lmin);
-#endif
 
     *mindegp = mindeg; *tagp = tag; *mwghtp = mwght;
 }
@@ -1468,14 +1386,12 @@ static void MDF(mdvisit)(
     V tail = head; V node = degnext[head]; int same = 1;
     md_prefetch(len, head); md_prefetch(degree, head);
     degprev[head] = 0;
-    MD_ADD(MD_C_WATER_VAR, 1);
 
     while (node > 0 && same) {
         // ask for what the next node needs here
         V nxnode = degnext[node];
         md_prefetch(pe, nxnode); md_prefetch(elen, nxnode);
         same = iw[pe[node] + (E) elen[node] - 1] == elmnt;
-        MD_ADD(MD_C_WATER_VAR, 1);
 
         if (same) {
             // and what this one needs in its recomputation
@@ -1490,17 +1406,6 @@ static void MDF(mdvisit)(
         degprev[node] = -(key + offset);
     }
 
-#ifdef MD_DEBUG
-    // the run is the whole group
-    V later = node;
-
-    while (later > 0) {
-        assert(iw[pe[later] + (E) elen[later] - 1] != elmnt);
-        later = degnext[later];
-    }
-#endif
-
-    MD_ADD(MD_C_GROUPS, 1); MD_SET_RC(MD_C_WATER_MARK);
     MDF(mdrecompute)(head, elmnt, pe, len, elen, iw,
         superwght, degree, deghead, degnext, degprev, marker,
         &tag, neqns, extlen, &mindeg, external, offset);
@@ -1560,7 +1465,6 @@ static void MDF(mdrecompute)(
     E estart = pe[elmnt];
     E estop = estart + (E) len[elmnt] - 1;
     E pkeep = estart;
-    MD_ADD_RC(0, estop - estart + 1);
 
     for (E j = estart; j <= estop; j++) {
         V node = iw[j];
@@ -1579,14 +1483,6 @@ static void MDF(mdrecompute)(
         gsize += 1; znode = degnext[znode];
     }
 
-#ifdef MD_COUNT
-    if (md_count_rc == MD_C_PASS_MARK) {
-        md_count[MD_C_RECOMP_PASS] += gsize;
-    } else {
-        md_count[MD_C_RECOMP_WATER] += gsize;
-    }
-#endif
-
     // mark the other elements of the nodes with the number of nodes that list
     // them, `marker[f] - base` (elements and nodes are marked in the same
     // vector: an element is never an uneliminated node)
@@ -1598,7 +1494,6 @@ static void MDF(mdrecompute)(
         V znext = degnext[znode];
         E p1 = pe[znode];
         E p2 = p1 + (E) elen[znode] - 1;
-        MD_ADD_RC(3, p2 - p1 + 1);
 
         for (E p = p1; p <= p2; p++) {
             V f = iw[p];
@@ -1628,7 +1523,6 @@ static void MDF(mdrecompute)(
         V znext = degnext[znode];
         E p1 = pe[znode];
         E p2 = p1 + (E) elen[znode] - 1;
-        MD_ADD_RC(3, p2 - p1 + 1);
 
         for (E p = p1; p <= p2; p++) {
             V f = iw[p];
@@ -1649,7 +1543,6 @@ static void MDF(mdrecompute)(
                 E jstart = pe[f];
                 E jstop = jstart + (E) len[f] - 1;
                 E pout = jstart; E pin = jstart;
-                MD_ADD_RC(1, jstop - jstart + 1);
 
                 for (E j = jstart; j <= jstop; j++) {
                     V node = iw[j]; V wght = superwght[node];
@@ -1687,7 +1580,6 @@ static void MDF(mdrecompute)(
         E p1 = pe[znode];
         E p2 = p1 + (E) elen[znode] - 1;
         E p4 = p1 + (E) len[znode] - 1;
-        MD_ADD_RC(3, p4 - p1 + 1);
 
         for (E p = p1; p <= p2; p++) {
             V f = iw[p];
@@ -1695,7 +1587,6 @@ static void MDF(mdrecompute)(
             if (f != elmnt && marker[f] != ctag) {
                 E qstart = pe[f];
                 E qstop = qstart + (E) extlen[f] - 1;
-                MD_ADD_RC(2, qstop - qstart + 1);
 
                 for (E q = qstart; q <= qstop; q++) {
                     V node = iw[q];
@@ -1858,7 +1749,6 @@ static E MDF(mdcompress)(
             E psrc = (E) (((w - 1) << 6) + md_ctz(bits) + 1);
             bits &= bits - 1;
             V node = -iw[psrc]; psrc += 1;
-            MD_ADD(MD_C_COMPRESS, len[node]);
             iw[pdst] = (V) pe[node]; pe[node] = pdst; pdst += 1;
 
             for (V k = 2; k <= len[node]; k++) {

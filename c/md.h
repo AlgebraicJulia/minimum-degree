@@ -72,47 +72,6 @@ MD_API int md_check(int32_t neqns, const int32_t *xadj, const int32_t *adjncy);
 
 MD_API int md_l_check(int64_t neqns, const int64_t *xadj, const int64_t *adjncy);
 
-#ifdef MD_BENCH
-/* the time in seconds of the last ordering, without the checks, the
- * allocation and the copy of the graph (a benchmarking build, compiled with
- * -DMD_BENCH) */
-MD_API double md_core_seconds(void);
-#endif
-
-#ifdef MD_COUNT
-/* work counters of the last ordering (a counting build, compiled with
- * -DMD_COUNT; not for timing). The first ten count entries of adjacency
- * lists read, each once by each loop that runs over its list:
- *
- *   MD_C_ELIM         the elimination (mdelim, mdupdate), outside the passes
- *   MD_C_COMPRESS     entries moved by the compression of iw
- *   MD_C_PASS_*       the eager passes (recomputations from mdupdate):
- *                     marking the nodes of the element (MARK), partitioning
- *                     the other elements (SCAN), the unions (UNION), and the
- *                     lists of the recomputed nodes (VAR)
- *   MD_C_WATER_*      the same, for the recomputations at the water (mdvisit)
- *
- * and the others count events:
- *
- *   MD_C_STEPS        eliminations (nodes of degree 0 at the start, and
- *                     pivots)
- *   MD_C_TOUCHED      the principal nodes of each reachable set, after the
- *                     merges and before mass elimination
- *   MD_C_CERTIFIED    those of them exact at their initial bound
- *   MD_C_RECOMP_PASS  nodes recomputed by the eager passes
- *   MD_C_RECOMP_WATER nodes recomputed at the water
- *   MD_C_GROUPS       groups recomputed at the water
- *   MD_C_RISE         the total rise of the water walk */
-enum { MD_C_ELIM, MD_C_COMPRESS,
-       MD_C_PASS_MARK, MD_C_PASS_SCAN, MD_C_PASS_UNION, MD_C_PASS_VAR,
-       MD_C_WATER_MARK, MD_C_WATER_SCAN, MD_C_WATER_UNION, MD_C_WATER_VAR,
-       MD_C_STEPS, MD_C_TOUCHED, MD_C_CERTIFIED,
-       MD_C_RECOMP_PASS, MD_C_RECOMP_WATER, MD_C_GROUPS,
-       MD_C_RISE, MD_NCOUNT };
-
-MD_API void md_counts(int64_t out[MD_NCOUNT]);
-#endif
-
 #ifdef __cplusplus
 }
 #endif

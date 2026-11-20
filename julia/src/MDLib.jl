@@ -492,15 +492,12 @@ end
 #     absorption). The ordering is exact for these supernodes.
 #   - `mass`: mass elimination. Each node of the reachable set whose only
 #     neighbors are those of the new element (it lies in no other element,
-#     and has no other neighbors) is eliminated with the pivot. With degree such a node is
-#     indistinguishable from the pivot, so the ordering remains exact. With
-#     `external` it need not be, and the ordering is no longer exact.
+#     and has no other neighbors) is eliminated with the pivot.
 #   - `twin`: false-twin elimination. Each node outside the reachable set
 #     whose neighbors are exactly the reachable set of the pivot, which has
 #     never been in a reachable set, and whose weight (with degree) is that
-#     of the pivot, is eliminated right after the pivot's supernode. With degree it is then simplicial and of minimum
-#     degree, so the ordering remains exact. With `external` it need not be,
-#     and the ordering is no longer exact (see `mdelim!`).
+#     of the pivot, is eliminated right after the pivot's supernode (see
+#     `mdelim!`).
 #   - `merged`: merge the classes in `extlen` first. On input, `extlen[node]`
 #     is the first node of the class of `node` (nodes with the same closed
 #     neighborhood), or 0 if `node` is first (see `mdclasses!`)
