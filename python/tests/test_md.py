@@ -6,7 +6,7 @@ from minimum_degree import check, md
 
 XADJ = [0, 1, 4, 9, 10, 12, 15, 18, 20]
 ADJNCY = [1, 0, 2, 5, 1, 3, 5, 6, 7, 2, 5, 6, 1, 2, 4, 2, 4, 7, 2, 6]
-INVP = [1, 2, 7, 0, 4, 3, 6, 5]
+INVP = [1, 2, 6, 0, 4, 3, 5, 7]
 
 
 def test_arrays():
@@ -23,7 +23,7 @@ def test_matrix():
 
 
 def test_options():
-    invp = md(XADJ, ADJNCY, external=False, mass=False, twin=False, compress=False)
+    invp = md(XADJ, ADJNCY, external=False, mass=False, twin=True, compress=True)
     assert sorted(invp.tolist()) == list(range(8))
     assert md(XADJ, ADJNCY, vwght=np.ones(8, dtype=int)).tolist() == INVP
 

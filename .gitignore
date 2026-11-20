@@ -10,5 +10,4 @@ c/libmd.dylib
 c/example
 python/build/
 python/src/*.egg-info/
-julia/Manifest.toml
 __pycache__/

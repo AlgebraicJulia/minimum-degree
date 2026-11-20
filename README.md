@@ -1,15 +1,14 @@
 # minimum-degree
 
-The exact minimum degree algorithm, in Python, Julia and C. The function `md`
-computes a minimum degree permutation of a graph with n vertices and m edges
-in O(mn) time and O(m + n) space. It returns the inverse permutation `invp`:
-`invp[v]` is the position of vertex `v`. The three versions compute the same
-orderings.
+The exact minimum degree algorithm, in C, with a Python wrapper. The function
+`md` computes a minimum degree permutation of a graph with n vertices and m
+edges in O(mn) time and O(m + n) space. It returns the inverse permutation
+`invp`: `invp[v]` is the position of vertex `v`.
 
 ## Python
 
-    md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, twin=True,
-       compress=True)
+    md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, twin=False,
+       compress=False)
 
 The package needs NumPy (and SciPy, for sparse matrices), and a C compiler
 to build the library. From this directory:
@@ -24,48 +23,14 @@ pip install ./python
 >>> xadj = [0, 1, 4, 9, 10, 12, 15, 18, 20]
 >>> adjncy = [1, 0, 2, 5, 1, 3, 5, 6, 7, 2, 5, 6, 1, 2, 4, 2, 4, 7, 2, 6]
 >>> md(xadj, adjncy)
-array([1, 2, 7, 0, 4, 3, 6, 5])
+array([1, 2, 6, 0, 4, 3, 5, 7])
 >>> a = scipy.sparse.csr_matrix((np.ones(20), adjncy, xadj))
 >>> md(a)                       # the graph of A + A^T
-array([1, 2, 7, 0, 4, 3, 6, 5])
+array([1, 2, 6, 0, 4, 3, 5, 7])
 >>> perm = np.argsort(md(a))    # the permutation
 ```
 
 Indices start at 0. Tests: `python python/tests/test_md.py`.
-
-## Julia
-
-    md(neqns[, vwght], xadj, adjncy; external=true, dense=10.0, mass=true, twin=true, compress=true)
-
-```julia-repl
-julia> using Pkg; Pkg.develop(path = "julia")
-
-julia> using MDLib, SparseArrays
-
-julia> graph = sparse([
-           0 1 0 0 0 0 0 0
-           1 0 1 0 0 1 0 0
-           0 1 0 1 0 1 1 1
-           0 0 1 0 0 0 0 0
-           0 0 0 0 0 1 1 0
-           0 1 1 0 1 0 0 0
-           0 0 1 0 1 0 0 1
-           0 0 1 0 0 0 1 0
-       ]);
-
-julia> invp = md(8, graph.colptr, graph.rowval)
-8-element Vector{Int64}:
- 2
- 3
- 8
- 1
- 5
- 4
- 7
- 6
-```
-
-Indices start at 1. Tests: `julia --project=julia -e 'using Pkg; Pkg.test()'`.
 
 ## C
 
@@ -89,7 +54,7 @@ int32_t xadj[9] = {0, 1, 4, 9, 10, 12, 15, 18, 20};
 int32_t adjncy[20] = {1, 0, 2, 5, 1, 3, 5, 6, 7, 2, 5, 6, 1, 2, 4, 2, 4, 7, 2, 6};
 int32_t invp[8];
 int status = md_order(8, NULL, xadj, adjncy, invp, NULL);   /* MD_OK */
-/* invp = {1, 2, 7, 0, 4, 3, 6, 5} */
+/* invp = {1, 2, 6, 0, 4, 3, 5, 7} */
 ```
 
 Indices start at 0. `md_order` returns `MD_TOO_LARGE` when 32 bits do not

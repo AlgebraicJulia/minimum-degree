@@ -95,8 +95,8 @@ def _call(fun, dtype, n, vwght, xadj, adjncy, options):
     return status, invp
 
 
-def md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, twin=True,
-       compress=True):
+def md(xadj, adjncy=None, vwght=None, *, external=True, dense=10.0, mass=True, twin=False,
+       compress=False):
     """Compute a minimum degree permutation of a graph with n vertices and m
     edges in O(mn) time and O(m + n) space. Returns the inverse permutation
     `invp`: `invp[v]` is the position of vertex `v` (so the permutation is

@@ -42,9 +42,9 @@ typedef struct {
                        removed from the graph and ordered last, as AMD does;
                        a negative value disables this (default 10.0) */
     int mass;       /* mass elimination (default 1) */
-    int twin;       /* false-twin detection (default 1) */
+    int twin;       /* false-twin detection (default 0) */
     int compress;   /* merge the vertices with the same closed neighborhood
-                       first (default 1) */
+                       first (default 0) */
 } md_options;
 
 /* set the default options */

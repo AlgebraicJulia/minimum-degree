@@ -149,8 +149,8 @@ void md_defaults(md_options *options) {
     options->external = 1;
     options->dense = 10.0;
     options->mass = 1;
-    options->twin = 1;
-    options->compress = 1;
+    options->twin = 0;
+    options->compress = 0;
 }
 
 // This routine checks the vectors of the graph and the weights (not the

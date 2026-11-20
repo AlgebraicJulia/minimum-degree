@@ -8,7 +8,7 @@ int main(void) {
     // the neighbors of vertex v are adjncy[xadj[v]], ..., adjncy[xadj[v + 1] - 1]
     int32_t xadj[9] = {0, 1, 4, 9, 10, 12, 15, 18, 20};
     int32_t adjncy[20] = {1, 0, 2, 5, 1, 3, 5, 6, 7, 2, 5, 6, 1, 2, 4, 2, 4, 7, 2, 6};
-    int32_t expected[8] = {1, 2, 7, 0, 4, 3, 6, 5};
+    int32_t expected[8] = {1, 2, 6, 0, 4, 3, 5, 7};
     int32_t invp[8];
     int64_t xadj64[9], adjncy64[20], invp64[8];
     int ok = md_check(8, xadj, adjncy) == MD_OK;
